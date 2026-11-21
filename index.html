@@ -1,0 +1,905 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>말랑 산장 살인사건</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Jua&family=Gowun+Dodum&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --ink:#3b2f2a; --paper:#fbf3e4; --paper2:#f3e6cc; --red:#b5352d; --navy:#2d3557;
+    --pink:#ffb7c5; --mint:#b8e8c8; --sky:#b9d8ff; --lemon:#ffe58a; --lav:#d9c8ff;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;overflow:hidden;background:#232742;color:var(--ink);font-family:'Gowun Dodum',sans-serif}
+  canvas#world{position:fixed;inset:0;width:100%;height:100%;touch-action:none;display:block}
+  .jua{font-family:'Jua',sans-serif}
+  button{font-family:'Jua',sans-serif;border:none;border-radius:16px;padding:12px 16px;font-size:16px;color:var(--ink);background:#fff;box-shadow:0 4px 0 rgba(0,0,0,.18);cursor:pointer}
+  button:active{transform:translateY(2px);box-shadow:0 2px 0 rgba(0,0,0,.18)}
+  button.primary{background:var(--red);color:#fff}
+  button.navy{background:var(--navy);color:#fff}
+  button:disabled{opacity:.45}
+  input{font-family:'Jua',sans-serif;font-size:18px;padding:12px 14px;border-radius:14px;border:3px solid var(--ink);background:#fff;width:100%;color:var(--ink)}
+  .hidden{display:none !important}
+
+  /* overlays */
+  .overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(25,22,40,.55);z-index:20}
+  .card{background:var(--paper);border-radius:22px;padding:20px;width:min(440px,100%);max-height:calc(100% - 24px);overflow:auto;box-shadow:0 10px 0 rgba(0,0,0,.25);position:relative}
+  .dossier{background:
+      radial-gradient(circle at 1px 1px, rgba(60,40,20,.09) 1px, transparent 1.4px) 0 0/6px 6px,
+      var(--paper);
+    border:2px solid #e2cfa9}
+  .title{font-family:'Jua';font-size:30px;line-height:1.15;margin:0 0 4px}
+  .sub{color:#5a4a40;margin:0 0 14px;font-size:14px}
+  .row{display:flex;gap:8px;align-items:center}
+  .stack{display:flex;flex-direction:column;gap:10px}
+  .stamp{position:absolute;right:64px;top:16px;border:3px solid var(--red);color:var(--red);font-family:'Jua';padding:2px 8px;border-radius:8px;transform:rotate(8deg);font-size:14px;opacity:.85}
+  .tag{display:inline-block;font-family:'Jua';font-size:12px;padding:2px 8px;border-radius:999px;background:var(--paper2);margin-right:4px}
+  .err{color:var(--red);font-size:14px;min-height:18px}
+  h3{font-family:'Jua';font-weight:400;margin:14px 0 6px;font-size:18px}
+  p{margin:6px 0;line-height:1.5}
+  .secret{background:#2d3557;color:#fff7e8;border-radius:14px;padding:12px}
+  .secret h3{color:var(--lemon);margin-top:0}
+
+  /* HUD */
+  #hud{position:fixed;left:0;right:0;top:0;padding:calc(env(safe-area-inset-top) + 10px) 12px 0;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;z-index:10;pointer-events:none}
+  #hud > *{pointer-events:auto}
+  .pill{background:rgba(251,243,228,.95);border-radius:999px;padding:8px 14px;font-family:'Jua';box-shadow:0 3px 0 rgba(0,0,0,.2);font-size:15px}
+  #phasePill b{color:var(--red)}
+  #bottom{position:fixed;left:0;right:0;bottom:0;padding:0 12px calc(env(safe-area-inset-bottom) + 12px);display:flex;justify-content:space-between;align-items:flex-end;gap:8px;z-index:10;pointer-events:none}
+  #bottom > *{pointer-events:auto}
+  #hint{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 78px);transform:translateX(-50%);background:rgba(35,39,66,.8);color:#fff;padding:6px 12px;border-radius:999px;font-size:13px;z-index:9;white-space:nowrap;pointer-events:none}
+  #inspectBtn{background:var(--lemon);font-size:18px;padding:14px 20px}
+  #toasts{position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 58px);transform:translateX(-50%);display:flex;flex-direction:column;gap:6px;align-items:center;z-index:15;pointer-events:none;width:92%}
+  .toast{background:rgba(251,243,228,.97);border-radius:14px;padding:8px 12px;font-size:14px;box-shadow:0 3px 0 rgba(0,0,0,.2);animation:pop .25s ease-out}
+  @keyframes pop{from{transform:scale(.8);opacity:0}to{transform:scale(1);opacity:1}}
+
+  /* notebook */
+  .tabs{display:flex;gap:6px;margin:6px 0 12px}
+  .tabs button{flex:1;padding:9px 6px;font-size:15px;background:var(--paper2);box-shadow:none}
+  .tabs button.on{background:var(--ink);color:#fff}
+  .ev{border:2px dashed #d8c39b;border-radius:14px;padding:10px;margin-bottom:8px;background:rgba(255,255,255,.5)}
+  .ev .n{font-family:'Jua';font-size:16px}
+  .who{display:flex;gap:10px;align-items:flex-start;padding:10px;border-radius:14px;background:rgba(255,255,255,.55);margin-bottom:8px}
+  .dot{width:34px;height:34px;border-radius:50%;flex:none;border:3px solid var(--ink)}
+  #miniView{width:100%;height:190px;border-radius:16px;background:radial-gradient(circle,#fff 0%,#f1e3c6 75%);display:block;margin:6px 0 10px}
+  .voteBtn{width:100%;display:flex;align-items:center;gap:10px;text-align:left;margin-bottom:8px}
+  .voteBtn.on{outline:4px solid var(--red)}
+  .bar{height:10px;border-radius:6px;background:var(--red)}
+  .lobbyList{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+<canvas id="world"></canvas>
+
+<!-- HUD -->
+<div id="hud" class="hidden">
+  <div class="stack" style="gap:6px">
+    <div class="pill" id="phasePill">대기실</div>
+    <div class="pill" id="roomPill" style="font-size:13px">방 코드 ----</div>
+  </div>
+  <div class="stack" style="gap:6px;align-items:flex-end">
+    <button id="hostBtn" class="primary hidden">게임 시작</button>
+  </div>
+</div>
+<div id="toasts"></div>
+<div id="hint" class="hidden">바닥을 터치해서 이동 · 반짝이는 물건을 터치해서 조사</div>
+<div id="bottom" class="hidden">
+  <button id="noteBtn" class="navy">📒 수첩</button>
+  <button id="inspectBtn" class="hidden">🔍 조사하기</button>
+  <button id="voteOpenBtn" class="primary hidden">🗳️ 투표</button>
+</div>
+
+<!-- Start screen -->
+<div id="startScreen" class="overlay" style="background:rgba(25,22,40,.35)">
+  <div class="card dossier">
+    <div class="stamp">CASE #1121</div>
+    <p class="sub jua" style="margin:0">친구들과 각자 폰으로 접속하는 추리 게임</p>
+    <h1 class="title">말랑 산장<br/>살인사건</h1>
+    <p class="sub">폭설로 고립된 밤, 산장 주인이 서재에서 쓰러졌다. 범인은 우리 중 한 명.</p>
+    <div class="stack">
+      <input id="nameInput" maxlength="8" placeholder="닉네임 (8자까지)" />
+      <button id="createBtn" class="primary">방 만들기</button>
+      <div class="row">
+        <input id="codeInput" maxlength="4" placeholder="방 코드" style="text-transform:uppercase" />
+        <button id="joinBtn" class="navy" style="flex:none">참가</button>
+      </div>
+      <div class="err" id="startErr"></div>
+      <p class="sub" style="margin:0">💡 대화는 보이스톡이나 디스코드로 하면서 플레이하세요. 추천 인원 4명 (1~6명 가능)</p>
+    </div>
+  </div>
+</div>
+
+<!-- Generic modal -->
+<div id="modal" class="overlay hidden">
+  <div class="card dossier" id="modalCard"></div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+
+/* ============================================================
+   SCENARIO DATA
+   ============================================================ */
+const SCENARIO = {
+  title: '말랑 산장 살인사건',
+  intro: `폭설로 산길이 끊긴 밤 11시. 산장 주인이자 골동품 수집가인 <b>백 회장</b>이 서재에서 쓰러진 채 발견됐다.
+찻잔 옆에 쓰러져 있었고, 깊은 잠에 빠진 듯 다시는 깨어나지 않았다. 수면제 과다로 보인다.
+산장에 남은 사람은 넷. 눈 때문에 아무도 나가지 못했다. <b>범인은 이 안에 있다.</b>`,
+  culprit: 'yunseo',
+  roles: {
+    haerin: {
+      name:'백하린', job:'조카', color:0xffb7c5, css:'#ffb7c5', acc:'bow',
+      public:'회장의 하나뿐인 조카. 유산 상속 1순위. 남색 후드티를 입고 있다.',
+      secret:'사업이 망해 빚이 3천만 원이다. 10시 30분에 서재에 가서 돈을 빌려 달라고 했다가 거절당하고 크게 다퉜다. 10시 35분에 방으로 돌아왔다.',
+      knows:'10시 50분쯤 방 창문으로 정원을 내다봤는데, 키 작은 그림자가 뒷문에서 쓰레기통 쪽으로 걸어갔다가 돌아왔다. 얼굴은 못 봤다.',
+      goal:'다툰 사실이 알려지면 가장 먼저 의심받는다. 숨겨도 되지만, 거짓말이 들키면 더 의심받는다. 진짜 범인을 찾아라.',
+      npc:'"10시 반쯤 삼촌이랑 잠깐 얘기했어요. 그리고 방에 있었어요. 10시 50분쯤 창밖 정원에 키 작은 그림자가 쓰레기통 쪽으로 가는 걸 봤어요."'
+    },
+    maru: {
+      name:'마루', job:'셰프', color:0xb8e8c8, css:'#b8e8c8', acc:'chef',
+      public:'산장 전속 요리사. 5년째 근무 중.',
+      secret:'회장의 고급 와인을 몰래 빼돌려 팔아 왔다. 주방의 와인 장부를 조작해 두었다.',
+      knows:'10시 40분, 회장님이 매일 밤 마시는 카모마일 차를 끓여 현관 홀 탁자에 올려 두었다. <b>꿀은 넣지 않았다. 회장님은 꿀을 싫어한다.</b> 10시 45분쯤 주방 창 너머로 남색 소매가 트레이를 들고 가는 걸 봤다.',
+      goal:'와인 일은 들키고 싶지 않다. 하지만 누명은 더 싫다. 진짜 범인을 찾아라.',
+      npc:'"10시 40분에 차를 끓여서 홀 탁자에 뒀어요. 회장님은 꿀을 싫어하셔서 꿀은 안 넣었어요. 45분쯤 남색 소매가 트레이를 가져가는 게 보였어요."'
+    },
+    yunseo: {
+      name:'윤서', job:'비서', color:0xb9d8ff, css:'#b9d8ff', acc:'glasses',
+      public:'회장의 개인 비서. 10년째 곁을 지켰다. 남색 가디건을 입고 있다.',
+      secret:'회장이 내일 변호사를 불러, 유언장에서 당신 몫(산장 운영권)을 지운다는 걸 알았다. 10시 45분, 홀 탁자의 차에 <b>불면증 약을 갈아 넣은 꿀</b>을 타서 서재로 가져갔다. 10시 52분 회장이 쓰러졌다. 빈 약봉지는 정원 쓰레기통에 태워 버렸다.',
+      knows:'저녁 식사 때 오필에게 "요즘 잠을 못 자서 약을 먹는다"고 말한 적이 있다. 오필이 기억할 수도 있다.',
+      goal:'<b>당신이 범인이다.</b> 들키지 말고 다른 사람이 지목되게 하라. 불리한 증거는 먼저 챙겨서 숨길 수 있다. 오필의 위작 문제나 하린의 빚을 흘리면 좋다.',
+      npc:'"10시 40분 이후로는 제 방에서 내일 일정 서류를 정리했어요. 서재 근처엔 가지 않았습니다."'
+    },
+    opil: {
+      name:'오필', job:'화가', color:0xffe58a, css:'#ffe58a', acc:'beret',
+      public:'회장에게 그림을 판 화가. 손님으로 머무는 중.',
+      secret:'회장에게 판 그림 「설산」은 사실 위작이다. 회장은 감정서를 받고 내일 이 사실을 폭로하겠다고 했다.',
+      knows:'저녁 식사 때 윤서가 "요즘 잠을 못 자서 약을 먹는다"고 했다. 그리고 11시 직전 서재 앞을 지날 때 문은 닫혀 있었고, 안에서 "탁" 하고 뭔가 부딪히는 소리가 났다.',
+      goal:'위작 이야기가 나오면 가장 강한 동기로 보인다. 숨기되, 진짜 범인을 찾아라.',
+      npc:'"저녁 때 윤서 씨가 요즘 잠을 못 자서 약을 먹는다더군요. 11시 직전 서재 앞에서 \'탁\' 소리를 들었습니다."'
+    },
+  },
+  helper: { name:'조수 탐정', job:'조수', color:0xd9c8ff, css:'#d9c8ff', acc:'hat',
+    public:'사건 현장에 함께 온 조수 탐정.', secret:'당신은 범인이 아니다. 비밀도 없다.',
+    knows:'아는 것은 없다. 현장을 꼼꼼히 뒤져 증거로 말하라.', goal:'다른 사람들을 도와 범인을 찾아라.' },
+  truth: `범인은 <b>비서 윤서</b>였다.
+유언장에서 자신의 몫(산장 운영권)이 지워질 것을 안 윤서는, 셰프가 홀 탁자에 둔 카모마일 차에 <b>불면증 약을 갈아 넣은 꿀</b>을 타서 서재로 가져갔다.
+꿀을 싫어하는 회장은 평소와 다른 맛을 눈치채지 못한 채 차를 마셨고, 10시 52분 쓰러지며 벽시계에 부딪혔다.
+윤서는 뒷문으로 나가 정원 쓰레기통에 약봉지를 태웠다. 눈 위의 작은 발자국과, 문고리에 걸린 남색 <b>니트</b> 털실(후드티가 아닌 가디건)이 그 흔적이다.`,
+  items: [
+    { id:'teacup', name:'식은 찻잔', room:'서재', desc:'식은 카모마일 차. 바닥에 <b>꿀</b>이 가라앉아 있고 하얀 가루가 섞여 있다. 쓴 냄새가 난다.' },
+    { id:'clock', name:'멈춘 벽시계', room:'서재', desc:'벽시계가 <b>10시 52분</b>에 멈춰 있다. 회장이 쓰러지며 부딪힌 듯 유리에 금이 갔다.' },
+    { id:'will', name:'금고 속 메모', room:'서재', desc:'"내일 변호사와 유언장 수정. <b>산장 운영권(비서 몫) 항목 삭제</b>." 회장의 글씨다.' },
+    { id:'thread', name:'문고리의 털실', room:'서재 문', desc:'서재 문고리에 걸린 <b>남색 털실</b> 한 가닥. 보풀이 인 걸 보니 면 후드티가 아니라 <b>니트</b>에서 나온 것 같다.' },
+    { id:'honey', name:'꿀단지', room:'주방', desc:'뚜껑 안쪽에 <b>하얀 가루</b>가 묻어 있다. 꿀을 뜬 숟가락은 보이지 않는다.' },
+    { id:'ledger', name:'와인 장부', room:'주방', desc:'장부 숫자가 맞지 않는다. 고급 와인 <b>12병</b>이 기록 없이 사라졌다. 셰프의 글씨다.' },
+    { id:'appraisal', name:'그림 감정서', room:'거실', desc:'거실에 걸린 그림 「설산」의 감정서. <b>"위작 판정"</b>. 회장의 메모: "내일 오필에게 따질 것."' },
+    { id:'letter', name:'빚 독촉장', room:'거실', desc:'백하린 앞으로 온 독촉장. <b>3천만 원</b>, 이번 달까지 갚지 않으면 법적 조치.' },
+    { id:'pills', name:'타다 만 약봉지', room:'정원 쓰레기통', desc:'반쯤 탄 약봉지. "불면증 — <b>○서</b> 님" 글자만 남아 있다.' },
+    { id:'steps', name:'눈 위의 발자국', room:'정원', desc:'뒷문에서 쓰레기통까지 갔다가 돌아온 <b>작은 발자국(235mm)</b>. 하린과 윤서의 발 크기가 235mm다.' },
+  ],
+};
+const ROLE_KEYS = ['haerin','maru','yunseo','opil'];
+const PHASES = {
+  lobby:{label:'대기실'}, intro:{label:'사건 소개'}, investigate:{label:'조사 중', ms:10*60e3},
+  discuss:{label:'토론', ms:5*60e3}, vote:{label:'투표'}, reveal:{label:'진상 공개'}
+};
+const NEXT = {lobby:'intro', intro:'investigate', investigate:'discuss', discuss:'vote', vote:'reveal'};
+const HOST_BTN = {lobby:'게임 시작', intro:'조사 시작', investigate:'토론으로', discuss:'투표 시작', vote:'결과 공개'};
+const LOBBY_COLORS = [0xffc8a2,0xc7b8ff,0xa8e6e1,0xffd6e8,0xd4f0a0,0xffe3a3];
+
+/* ============================================================
+   STATE
+   ============================================================ */
+let S = { phase:'lobby', phaseEnd:0, players:{}, items:{}, votes:{}, order:[] };
+SCENARIO.items.forEach(it=> S.items[it.id] = {holder:null, shared:false});
+let phaseEndLocal = 0;
+const me = { id:null, name:'', x:7, z:5, ry:0, target:null, moving:false };
+const seen = new Set(); // item ids I have looked at
+const NET = { isHost:false, peer:null, conns:{}, hostConn:null, code:'' };
+const $ = s=>document.querySelector(s);
+
+/* ============================================================
+   THREE SETUP
+   ============================================================ */
+const canvas = $('#world');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x2a2f4f);
+scene.fog = new THREE.Fog(0x2a2f4f, 26, 48);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100);
+scene.add(new THREE.HemisphereLight(0xfff1e0, 0x6a6f9e, 1.25));
+const sun = new THREE.DirectionalLight(0xfff0dc, 1.5);
+sun.position.set(6, 16, 8); sun.castShadow = true;
+sun.shadow.mapSize.set(1024,1024);
+Object.assign(sun.shadow.camera, {left:-16,right:16,top:16,bottom:-16,near:1,far:40});
+scene.add(sun); scene.add(sun.target);
+
+const matCache = {};
+const clay = (c, extra={}) => {
+  const k = c + JSON.stringify(extra);
+  return matCache[k] ||= new THREE.MeshStandardMaterial({color:c, roughness:.82, metalness:0, ...extra});
+};
+const rbox = (w,h,d,c,r=.12) => { const m = new THREE.Mesh(new RoundedBoxGeometry(w,h,d,3,Math.min(r,w/2,h/2,d/2)), clay(c)); m.castShadow = m.receiveShadow = true; return m; };
+const cyl = (rt,rb,h,c,seg=20) => { const m = new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,seg), clay(c)); m.castShadow = m.receiveShadow = true; return m; };
+const sph = (r,c) => { const m = new THREE.Mesh(new THREE.SphereGeometry(r,24,16), clay(c)); m.castShadow = true; return m; };
+const at = (o,x,y,z) => { o.position.set(x,y,z); return o; };
+
+/* ---------- world layout ----------
+   lounge(NW) x-10..0 z-10..0 | study(NE) x0..10 z-10..0
+   kitchen(SW) x-10..0 z0..10 | hall(SE)  x0..10 z0..10
+   garden z10..18 (outside)                                   */
+const colliders = [];
+const addCol = (minX,maxX,minZ,maxZ) => colliders.push({minX,maxX,minZ,maxZ});
+const WALL_H = 1.9, WALL_T = .35, WALL_C = 0xfbe9d7;
+function wallSeg(x1,z1,x2,z2){
+  const horiz = z1===z2;
+  const len = horiz ? Math.abs(x2-x1) : Math.abs(z2-z1);
+  const w = rbox(horiz?len+WALL_T:WALL_T, WALL_H, horiz?WALL_T:len+WALL_T, WALL_C, .1);
+  at(w,(x1+x2)/2, WALL_H/2, (z1+z2)/2); scene.add(w);
+  const h = WALL_T/2;
+  addCol(Math.min(x1,x2)-h, Math.max(x1,x2)+h, Math.min(z1,z2)-h, Math.max(z1,z2)+h);
+}
+// outer
+wallSeg(-10,-10,10,-10); wallSeg(-10,-10,-10,10); wallSeg(10,-10,10,10);
+wallSeg(-10,10,-6,10); wallSeg(-4,10,4,10); wallSeg(6,10,10,10);
+// inner
+wallSeg(0,-10,0,-6); wallSeg(0,-4,0,4); wallSeg(0,6,0,10);
+wallSeg(-10,0,-6,0); wallSeg(-4,0,4,0); wallSeg(6,0,10,0);
+
+function floor(x1,x2,z1,z2,c){ const f = rbox(x2-x1, .2, z2-z1, c, .05); at(f,(x1+x2)/2,-.1,(z1+z2)/2); f.castShadow=false; scene.add(f); }
+floor(-10,0,-10,0,0xf6d7c3); floor(0,10,-10,0,0xd8bb98); floor(-10,0,0,10,0xe3eef6); floor(0,10,0,10,0xefe1c8);
+floor(-11,11,10,19,0xf3f7ff);
+// outside ground
+const ground = new THREE.Mesh(new THREE.CircleGeometry(40,40), clay(0xdfe6f5)); ground.rotation.x=-Math.PI/2; ground.position.y=-.21; ground.receiveShadow=true; scene.add(ground);
+// kitchen tiles
+for(let i=0;i<5;i++)for(let j=0;j<5;j++) if((i+j)%2) { const t=rbox(1.9,.02,1.9,0xcfe0ee,.01); at(t,-9+i*2,0.01,1+j*2); t.castShadow=false; scene.add(t); }
+// garden fence
+for(let x=-10;x<=10;x+=1.25){ const p=rbox(.25,.9,.25,0xc99b74,.06); at(p,x,.45,18.6); scene.add(p); }
+for(let z=10.6;z<=18.6;z+=1.25){ for(const x of [-10.6,10.6]){ const p=rbox(.25,.9,.25,0xc99b74,.06); at(p,x,.45,z); scene.add(p);} }
+const rail1 = rbox(21.2,.12,.12,0xb98a63,.05); at(rail1,0,.7,18.6); scene.add(rail1);
+
+// room labels on floor
+function floorLabel(text,x,z){
+  const c=document.createElement('canvas'); c.width=512; c.height=128; const g=c.getContext('2d');
+  g.font='64px Jua, sans-serif'; g.fillStyle='rgba(80,55,40,.28)'; g.textAlign='center'; g.textBaseline='middle'; g.fillText(text,256,64);
+  const tex=new THREE.CanvasTexture(c); tex.colorSpace=THREE.SRGBColorSpace;
+  const m=new THREE.Mesh(new THREE.PlaneGeometry(4,1), new THREE.MeshBasicMaterial({map:tex,transparent:true,depthWrite:false}));
+  m.rotation.x=-Math.PI/2; m.position.set(x,.02,z); scene.add(m);
+}
+document.fonts.ready.then(()=>{ floorLabel('거실',-5,-1.2); floorLabel('서재',5,-1.2); floorLabel('주방',-5,8.8); floorLabel('현관 홀',5,8.8); floorLabel('정원',0,17.4); });
+
+/* ---------- furniture ---------- */
+function solid(obj, w, d){ scene.add(obj); addCol(obj.position.x-w/2, obj.position.x+w/2, obj.position.z-d/2, obj.position.z+d/2); return obj; }
+// lounge
+const sofa = new THREE.Group(); sofa.add(at(rbox(3.4,.6,1.3,0xe88f8f,.25),0,.3,0)); sofa.add(at(rbox(3.4,.9,.4,0xd97a7a,.2),0,.75,-.5));
+sofa.add(at(rbox(.4,.8,1.3,0xd97a7a,.18),-1.7,.5,0)); sofa.add(at(rbox(.4,.8,1.3,0xd97a7a,.18),1.7,.5,0));
+at(sofa,-6,0,-8.5); solid(sofa,3.8,1.4);
+solid(at(rbox(2,.35,1,0xc99b74,.12),-6,.4,-6.4),2,1);
+// painting "설산"
+const frame = rbox(2.4,1.6,.15,0xb8864e,.06); at(frame,-3,1.1,-9.78); scene.add(frame);
+const art = rbox(2.1,1.3,.05,0xcfe3ff,.03); at(art,-3,1.1,-9.68); scene.add(art);
+const mtn = new THREE.Mesh(new THREE.ConeGeometry(.6,.8,3), clay(0xffffff)); at(mtn,-3,1.0,-9.62); mtn.scale.z=.05; scene.add(mtn);
+// fireplace
+const fp = new THREE.Group(); fp.add(at(rbox(2.2,1.6,.8,0xb5a49a,.1),0,.8,0)); fp.add(at(rbox(1.2,.8,.3,0x3a2a2a,.1),0,.5,.3));
+const fire = sph(.28,0xff9a3c); fire.material = new THREE.MeshBasicMaterial({color:0xffa040}); fp.add(at(fire,0,.45,.35));
+at(fp,-9.4,0,-4); fp.rotation.y=Math.PI/2; solid(fp,.9,2.2);
+const fireLight = new THREE.PointLight(0xff9a50, 6, 7); fireLight.position.set(-8.5,1,-4); scene.add(fireLight);
+// study
+const desk = new THREE.Group(); desk.add(at(rbox(2.6,.18,1.2,0x9b6b45,.06),0,.8,0));
+for(const [x,z] of [[-1.15,-.45],[1.15,-.45],[-1.15,.45],[1.15,.45]]) desk.add(at(rbox(.18,.8,.18,0x8a5c3a,.05),x,.4,z));
+at(desk,6,0,-7.6); solid(desk,2.6,1.2);
+const chair = new THREE.Group(); chair.add(at(rbox(.9,.15,.9,0x6c4a7a,.06),0,.5,0)); chair.add(at(rbox(.9,.9,.15,0x6c4a7a,.06),0,.95,-.4)); at(chair,6,0,-8.9); scene.add(chair);
+for(let i=0;i<3;i++){ const shelf = rbox(1.8,1.8,.6,0x8e6242,.08); at(shelf,1.4+i*1.9,.9,-9.55); solid(shelf,1.8,.6);
+  for(let b=0;b<6;b++){ const bk = rbox(.2,.5,.4,[0xe36d6d,0x6d9be3,0xe3c56d,0x7fc98b][b%4],.04); at(bk,1.4+i*1.9-.65+b*.26,1.35-(b%2)*.55,-9.3); scene.add(bk);} }
+// chalk outline
+const outline = new THREE.Group();
+const chalk = new THREE.MeshBasicMaterial({color:0xffffff});
+const ring = (r,x,z,sx=1,sz=1)=>{ const m=new THREE.Mesh(new THREE.TorusGeometry(r,.04,6,32), chalk); m.rotation.x=-Math.PI/2; m.scale.set(sx,sz,1); m.position.set(x,.03,z); outline.add(m); };
+ring(.35,0,-1); ring(.55,0,0,1,1.5); ring(.18,-.65,-.2,1,2.4); ring(.18,.65,-.2,1,2.4); ring(.18,-.25,1.2,1,2.2); ring(.18,.25,1.2,1,2.2);
+at(outline,5.5,0,-4.5); outline.rotation.y=.5; scene.add(outline);
+// police tape at study door
+for(const z of [-.05]) { const tape = rbox(2,.08,.04,0xffd23f,.02); at(tape,5,1.1,z); tape.rotation.z=.12; scene.add(tape); }
+// kitchen
+const counter = rbox(1.1,.9,7.5,0xf4f4f4,.1); at(counter,-9.35,.45,5); solid(counter,1.1,7.5);
+const counterTop = rbox(1.2,.1,7.6,0x88a6c4,.04); at(counterTop,-9.35,.95,5); scene.add(counterTop);
+const stove = rbox(.9,.05,.9,0x333333,.03); at(stove,-9.35,1.02,5.2); scene.add(stove);
+const pot = cyl(.32,.3,.4,0xe36d6d); at(pot,-9.35,1.25,5.2); scene.add(pot);
+const ktable = cyl(1.1,1.1,.12,0xf5d39a,28); at(ktable,-4.5,.78,4.8); solid(ktable,1.6,1.6); const kleg = cyl(.15,.25,.75,0xc99b74); at(kleg,-4.5,.38,4.8); scene.add(kleg);
+// hall
+const htable = rbox(1.6,.12,.9,0xc99b74,.05); at(htable,7,.8,3); solid(htable,1.6,.9);
+for(const [x,z] of [[-.65,-.3],[.65,-.3],[-.65,.3],[.65,.3]]) { const l=rbox(.12,.8,.12,0xa77c58,.04); at(l,7+x,.4,3+z); scene.add(l);}
+const tray = rbox(.9,.05,.6,0xd8d8e8,.02); at(tray,7,.88,3); scene.add(tray);
+const rug = rbox(3,.03,2,0xc96a6a,.02); at(rug,5,0.02,7.8); rug.castShadow=false; scene.add(rug);
+const coat = cyl(.08,.08,1.8,0x8a5c3a); at(coat,9.3,.9,9.3); scene.add(coat); scene.add(at(sph(.25,0x2d3557),9.1,1.6,9.3));
+// garden: trees, trash can, snowmen
+function tree(x,z,s=1){ const g=new THREE.Group(); g.add(at(cyl(.15,.2,.6,0x8a5c3a),0,.3,0));
+  for(let i=0;i<3;i++){ const c=new THREE.Mesh(new THREE.ConeGeometry(.9-i*.22,.9,8), clay(0x5fae8a)); c.castShadow=true; at(c,0,.8+i*.5,0); g.add(c); const sn=new THREE.Mesh(new THREE.ConeGeometry(.45-i*.12,.3,8), clay(0xffffff)); at(sn,0,1.15+i*.5,0); g.add(sn);}
+  g.scale.setScalar(s); at(g,x,0,z); solid(g,.6*s,.6*s); }
+tree(-9,12,1.1); tree(8.6,12.5,1.2); tree(9,16.8,1); tree(2.5,16.5,.9); tree(-3,17.2,1);
+const can = new THREE.Group(); can.add(at(cyl(.45,.38,.95,0x7a8494),0,.48,0)); can.add(at(cyl(.5,.5,.1,0x5f6878),0,.98,0)); at(can,-8,0,15); solid(can,.9,.9);
+const smoke = sph(.15,0x999999); at(smoke,-8,1.2,15); scene.add(smoke);
+const snowman = new THREE.Group(); snowman.add(at(sph(.55,0xffffff),0,.5,0)); snowman.add(at(sph(.38,0xffffff),0,1.2,0)); snowman.add(at(cyl(.25,.25,.3,0x333333),0,1.62,0));
+at(snowman,5.5,0,14.5); solid(snowman,.9,.9);
+// lamps (warm point lights per room)
+for(const [x,z] of [[-5,-5],[5,-5],[-5,5],[5,5]]){ const l=new THREE.PointLight(0xffd7a0,4,11); l.position.set(x,3,z); scene.add(l);}
+// snow particles
+const SNOW = 500, snowGeo = new THREE.BufferGeometry(), snowPos = new Float32Array(SNOW*3);
+for(let i=0;i<SNOW;i++){ snowPos[i*3]=(Math.random()-.5)*40; snowPos[i*3+1]=Math.random()*12; snowPos[i*3+2]=(Math.random()-.5)*40+6; }
+snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos,3));
+const snow = new THREE.Points(snowGeo, new THREE.PointsMaterial({color:0xffffff,size:.12,transparent:true,opacity:.85,depthWrite:false}));
+scene.add(snow);
+
+/* ---------- evidence items ---------- */
+const ITEM_POS = {
+  teacup:[6.6,.89,-7.4], clock:[3.6,1.45,-9.72], will:[9.2,0,-2], thread:[4.15,1.0,.25],
+  honey:[-9.3,1.0,2.6], ledger:[-9.3,1.0,7.6], appraisal:[-3,0,-8.6], letter:[-6.6,.62,-8.3],
+  pills:[-8,1.03,15], steps:[-6.2,0,12.8],
+};
+function buildItemVis(id){
+  const g = new THREE.Group();
+  switch(id){
+    case 'teacup': g.add(at(cyl(.32,.32,.04,0xffffff),0,0,0)); g.add(at(cyl(.17,.12,.2,0xffffff),0,.12,0)); g.add(at(cyl(.15,.15,.02,0xc8a24a),0,.21,0));
+      { const h=new THREE.Mesh(new THREE.TorusGeometry(.07,.025,8,16),clay(0xffffff)); at(h,.2,.12,0); g.add(h);} break;
+    case 'clock': g.add(cyl(.42,.42,.1,0x9b6b45)); g.add(at(cyl(.36,.36,.04,0xfffaf0),0,.06,0));
+      { const a=rbox(.04,.03,.26,0x222222,.01); at(a,.0,.09,-.1); g.add(a); const b=rbox(.04,.03,.18,0x222222,.01); at(b,.07,.09,.03); b.rotation.y=-1.0; g.add(b);} g.rotation.x=Math.PI/2; break;
+    case 'will': g.add(at(rbox(.9,.9,.8,0x5f6878,.1),0,.45,0)); g.add(at(rbox(.6,.6,.06,0x4a5260,.05),0,.45,.42)); g.add(at(cyl(.08,.08,.08,0xffd23f),.15,.45,.47)); g.add(at(rbox(.5,.02,.35,0xfffaf0,.01),0,.93,0)); break;
+    case 'thread': { const t=new THREE.Mesh(new THREE.TorusKnotGeometry(.1,.025,48,6,2,3),clay(0x2d3557)); g.add(t); g.add(at(sph(.06,0x2d3557),.12,-.12,0)); } break;
+    case 'honey': g.add(at(cyl(.2,.22,.35,0xf4b63b),0,.17,0)); g.add(at(cyl(.22,.22,.08,0xc8423a),0,.38,0)); g.add(at(sph(.05,0xffffff),.08,.44,0)); break;
+    case 'ledger': g.add(at(rbox(.55,.1,.4,0x7a3b2e,.03),0,.05,0)); g.add(at(rbox(.5,.08,.36,0xfffaf0,.02),0,.12,0)); break;
+    case 'appraisal': g.add(at(rbox(.08,1.2,.08,0xb8864e,.03),-.3,.6,0)); g.add(at(rbox(.08,1.2,.08,0xb8864e,.03),.3,.6,0)); g.add(at(rbox(.75,.95,.05,0xfffaf0,.02),0,1.05,.08)); g.add(at(cyl(.13,.13,.02,0xc8423a),.18,.8,.12).rotateX(Math.PI/2)); break;
+    case 'letter': g.add(at(rbox(.5,.04,.35,0xfff0f0,.02),0,0,0)); g.add(at(rbox(.12,.02,.12,0xc8423a,.01),.14,.03,-.08)); break;
+    case 'pills': g.add(at(rbox(.35,.04,.25,0xffffff,.02),0,0,0)); g.add(at(rbox(.15,.05,.25,0x3a3030,.02),.12,.01,0)); break;
+    case 'steps': for(let i=0;i<6;i++){ const s=new THREE.Mesh(new THREE.CircleGeometry(.12,12),clay(0xa9b6d0)); s.rotation.x=-Math.PI/2; s.scale.set(.8,1.4,1); at(s,(i%2?.18:-.18)-i*.25,.03,i*.45-1); g.add(s);} break;
+  }
+  return g;
+}
+const items = {}; // id -> {group, vis, spark, trace, hit}
+const sparkMat = new THREE.MeshBasicMaterial({color:0xfff27a, transparent:true, opacity:.9});
+for(const it of SCENARIO.items){
+  const [x,y,z] = ITEM_POS[it.id];
+  const group = new THREE.Group(); group.position.set(x,y,z);
+  const vis = buildItemVis(it.id); group.add(vis);
+  const spark = new THREE.Group();
+  const star = new THREE.Mesh(new THREE.OctahedronGeometry(.14), sparkMat); spark.add(star);
+  spark.position.y = (it.id==='steps'||it.id==='will'||it.id==='appraisal') ? 1.6 : .7; group.add(spark);
+  const trace = new THREE.Mesh(new THREE.TorusGeometry(.35,.03,6,24), new THREE.MeshBasicMaterial({color:0xc8423a}));
+  trace.rotation.x=-Math.PI/2; trace.position.y = .05; trace.visible=false; group.add(trace);
+  const hit = new THREE.Mesh(new THREE.SphereGeometry(.8,8,6), new THREE.MeshBasicMaterial({transparent:true,opacity:0,depthWrite:false}));
+  hit.position.y = .4; hit.userData.itemId = it.id; group.add(hit);
+  scene.add(group);
+  items[it.id] = {group, vis, spark, trace, hit, def:it};
+}
+const itemHits = Object.values(items).map(i=>i.hit);
+
+/* ---------- characters ---------- */
+function labelSprite(text){
+  const c=document.createElement('canvas'); c.width=256; c.height=72; const g=c.getContext('2d');
+  g.font='36px Jua, sans-serif'; const w=Math.min(250, g.measureText(text).width+28);
+  g.fillStyle='rgba(251,243,228,.95)'; g.beginPath(); g.roundRect((256-w)/2,10,w,52,26); g.fill();
+  g.fillStyle='#3b2f2a'; g.textAlign='center'; g.textBaseline='middle'; g.fillText(text,128,37);
+  const tex=new THREE.CanvasTexture(c); tex.colorSpace=THREE.SRGBColorSpace;
+  const s=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,depthTest:false,transparent:true}));
+  s.scale.set(1.8,.5,1); s.renderOrder=5; return s;
+}
+function makeChar(color, acc){
+  const g = new THREE.Group(); const body = new THREE.Group(); g.add(body);
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(.34,.35,6,16), clay(color)); torso.castShadow=true; at(torso,0,.58,0); body.add(torso);
+  body.add(at(sph(.42,color),0,1.32,0));
+  for(const s of [-1,1]){ body.add(at(sph(.055,0x2b2222),s*.15,1.36,.37)); const ck=sph(.07,0xff9aa8); at(ck,s*.25,1.24,.33); ck.scale.z=.4; body.add(ck);
+    const ft=sph(.13,0x5a4a44); at(ft,s*.16,.1,.05); ft.scale.set(1,.6,1.3); body.add(ft);
+    const arm=sph(.11,color); at(arm,s*.4,.62,0); body.add(arm); }
+  if(acc==='chef'){ body.add(at(cyl(.24,.22,.35,0xffffff),0,1.82,0)); body.add(at(sph(.3,0xffffff),0,2.02,0)); }
+  if(acc==='glasses'){ for(const s of [-1,1]){ const r=new THREE.Mesh(new THREE.TorusGeometry(.09,.02,6,16),clay(0x2d3557)); at(r,s*.15,1.36,.4); body.add(r);} body.add(at(rbox(.6,.4,.5,0x2d3557,.15),0,.62,0)); }
+  if(acc==='beret'){ const b=sph(.36,0xc8423a); b.scale.set(1.1,.35,1.1); at(b,.05,1.7,0); b.rotation.z=.25; body.add(b); }
+  if(acc==='bow'){ for(const s of [-1,1]){ const b=new THREE.Mesh(new THREE.ConeGeometry(.12,.22,10),clay(0xff6b8a)); b.rotation.z=s*Math.PI/2; at(b,s*.13+.22,1.7,0); body.add(b);} body.add(at(rbox(.62,.42,.5,0x2d3557,.15),0,.6,0)); }
+  if(acc==='hat'){ body.add(at(cyl(.45,.45,.04,0x6b5b4b),0,1.66,0)); body.add(at(cyl(.27,.29,.3,0x6b5b4b),0,1.82,0)); }
+  return {group:g, body};
+}
+const avatars = {}; // id -> {group, body, label, key, tx, tz, try, walkT}
+function lookFor(p, idx){
+  if(p.role){ const r = SCENARIO.roles[p.role] || SCENARIO.helper; return {color:r.color, acc:r.acc, key:p.role}; }
+  return {color: LOBBY_COLORS[idx % LOBBY_COLORS.length], acc:null, key:'c'+idx};
+}
+function syncAvatars(){
+  S.order.forEach((id,idx)=>{
+    const p = S.players[id]; if(!p) return;
+    const look = lookFor(p, idx);
+    const labelText = p.role ? `${p.name} · ${(SCENARIO.roles[p.role]||SCENARIO.helper).name}` : p.name;
+    let a = avatars[id];
+    if(!a || a.key!==look.key || a.labelText!==labelText){
+      if(a) scene.remove(a.group);
+      const c = makeChar(look.color, look.acc);
+      const label = labelSprite(labelText); label.position.y = 2.45; c.group.add(label);
+      a = avatars[id] = {...c, label, key:look.key, labelText, tx:p.x, tz:p.z, try:p.ry||0, walkT:0, moving:false};
+      c.group.position.set(p.x,0,p.z); scene.add(c.group);
+    }
+    a.group.visible = p.online !== false;
+  });
+  for(const id of Object.keys(avatars)) if(!S.players[id]){ scene.remove(avatars[id].group); delete avatars[id]; }
+}
+
+/* ============================================================
+   INPUT & MOVEMENT
+   ============================================================ */
+const R = .38;
+function blocked(x,z){
+  if(x<-9.7||x>9.7||z<-9.7||z>18.2) return true;
+  for(const c of colliders) if(x>c.minX-R && x<c.maxX+R && z>c.minZ-R && z<c.maxZ+R) return true;
+  return false;
+}
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), groundPlane = new THREE.Plane(new THREE.Vector3(0,1,0),0);
+let downAt = null, pendingInspect = null;
+canvas.addEventListener('pointerdown', e=>{ downAt = {x:e.clientX,y:e.clientY,t:performance.now()}; });
+canvas.addEventListener('pointerup', e=>{
+  if(!downAt || !me.id) return;
+  const moved = Math.hypot(e.clientX-downAt.x, e.clientY-downAt.y);
+  downAt = null; if(moved>14) return;
+  ndc.set(e.clientX/innerWidth*2-1, -(e.clientY/innerHeight)*2+1);
+  ray.setFromCamera(ndc, camera);
+  const hit = ray.intersectObjects(itemHits,false)[0];
+  if(hit && canInvestigate()){
+    const id = hit.object.userData.itemId; const p = items[id].group.position;
+    if(Math.hypot(p.x-me.x,p.z-me.z) < 2.0){ openInspect(id); return; }
+    pendingInspect = id; goTo(p.x, p.z); return;
+  }
+  const pt = new THREE.Vector3();
+  if(ray.ray.intersectPlane(groundPlane, pt)){ goTo(pt.x, pt.z); pendingInspect = null; showMarker(pt.x, pt.z); }
+});
+const marker = new THREE.Mesh(new THREE.RingGeometry(.25,.36,24), new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.8,depthWrite:false}));
+marker.rotation.x=-Math.PI/2; marker.visible=false; scene.add(marker);
+let markerT=0; function showMarker(x,z){ marker.position.set(x,.04,z); marker.visible=true; markerT=1; }
+
+/* simple room graph pathing: walk through door centers */
+const DOORS = { 'L-S':[0,-5], 'L-K':[-5,0], 'S-H':[5,0], 'K-H':[0,5], 'K-G':[-5,10], 'H-G':[5,10] };
+const roomOf = (x,z)=> z>10 ? 'G' : (z<0 ? (x<0?'L':'S') : (x<0?'K':'H'));
+function roomPath(a,b){
+  if(a===b) return [];
+  const prev = {[a]:null}, q=[a];
+  while(q.length){ const r=q.shift(); if(r===b) break;
+    for(const k in DOORS){ const [p,n]=k.split('-'); const o = p===r?n:(n===r?p:null); if(o && !(o in prev)){ prev[o]={from:r,door:k}; q.push(o);} } }
+  const doors=[]; let cur=b; while(prev[cur]){ doors.unshift(DOORS[prev[cur].door]); cur=prev[cur].from; }
+  return doors.map(([x,z])=>({x,z,wp:true}));
+}
+function goTo(x,z){
+  me.path = [...roomPath(roomOf(me.x,me.z), roomOf(x,z)), {x,z}];
+  me.target = me.path.shift();
+}
+
+function canInvestigate(){ return ['investigate','discuss','vote','reveal'].includes(S.phase); }
+function nearestItem(){
+  let best=null, bd=1.9;
+  for(const id in items){ const p=items[id].group.position; const d=Math.hypot(p.x-me.x,p.z-me.z); if(d<bd){bd=d;best=id;} }
+  return best;
+}
+
+/* ============================================================
+   NETWORK (PeerJS, host-authoritative star)
+   ============================================================ */
+const PREFIX = 'malangcs-2611-';
+function genCode(){ const A='ABCDEFGHJKMNPQRSTUVWXYZ'; let s=''; for(let i=0;i<4;i++) s+=A[Math.floor(Math.random()*A.length)]; return s; }
+function startErr(m){ $('#startErr').textContent = m; $('#createBtn').disabled = $('#joinBtn').disabled = false; }
+
+function createRoom(name, tries=0){
+  const code = genCode();
+  const peer = new Peer(PREFIX+code, {debug:1});
+  peer.on('open', ()=>{
+    NET.isHost = true; NET.peer = peer; NET.code = code; me.id = 'host'; me.name = name;
+    S.players.host = {name, x:7, z:6, ry:0, role:null, online:true}; S.order.push('host');
+    enterGame();
+    hostBroadcastState();
+  });
+  peer.on('connection', conn=>{
+    conn.on('data', msg=> hostHandle(msg, conn.peer, conn));
+    conn.on('close', ()=> hostDrop(conn.peer));
+    conn.on('error', ()=> hostDrop(conn.peer));
+  });
+  peer.on('error', err=>{
+    if(err.type==='unavailable-id' && tries<3){ peer.destroy(); createRoom(name, tries+1); return; }
+    if(!me.id) startErr('방을 만들지 못했어요. 인터넷 연결을 확인해 주세요. ('+err.type+')');
+    else toast('⚠️ 연결 문제: '+err.type);
+  });
+  peer.on('disconnected', ()=>{ try{ peer.reconnect(); }catch(e){} });
+}
+function joinRoom(name, code){
+  const peer = new Peer({debug:1});
+  NET.peer = peer; NET.code = code;
+  const timeout = setTimeout(()=>{ if(!me.id) startErr('방을 찾을 수 없어요. 코드를 확인해 주세요.'); }, 12000);
+  peer.on('open', id=>{
+    const conn = peer.connect(PREFIX+code, {reliable:true, serialization:'json'});
+    NET.hostConn = conn;
+    conn.on('open', ()=>{ clearTimeout(timeout); me.id = id; me.name = name; conn.send({t:'hello', name}); enterGame(); });
+    conn.on('data', onMsg);
+    conn.on('close', ()=>{ toast('🔌 방장과 연결이 끊겼어요.'); showModal(`<h2 class="title">연결이 끊겼어요</h2><p>방장이 나갔거나 인터넷이 끊겼어요.</p><button class="primary" onclick="location.reload()">처음으로</button>`, false); });
+  });
+  peer.on('error', err=>{
+    clearTimeout(timeout);
+    if(err.type==='peer-unavailable') startErr('방을 찾을 수 없어요. 코드를 확인해 주세요.');
+    else if(!me.id) startErr('연결하지 못했어요. ('+err.type+')');
+    else toast('⚠️ 연결 문제: '+err.type);
+  });
+}
+function send(msg){
+  if(NET.isHost) hostHandle(msg, 'host');
+  else if(NET.hostConn && NET.hostConn.open) NET.hostConn.send(msg);
+}
+function hostSendAll(msg){
+  for(const c of Object.values(NET.conns)) if(c.open) c.send(msg);
+  onMsg(msg);
+}
+function hostBroadcastState(){
+  const rem = S.phaseEnd ? S.phaseEnd - Date.now() : 0;
+  for(const c of Object.values(NET.conns)) if(c.open) c.send({t:'state', s:S, rem});
+  onMsg({t:'state', s:S, rem, local:true});
+}
+function hostDrop(pid){
+  if(!NET.conns[pid]) return;
+  delete NET.conns[pid];
+  const p = S.players[pid]; if(!p) return;
+  if(S.phase==='lobby'){ delete S.players[pid]; S.order = S.order.filter(x=>x!==pid); }
+  else p.online = false;
+  hostSendAll({t:'toast', m:`👋 ${p.name}님이 나갔어요.`});
+  hostBroadcastState();
+}
+function hostHandle(msg, from, conn){
+  const p = S.players[from];
+  switch(msg.t){
+    case 'hello': {
+      if(conn) NET.conns[from] = conn;
+      if(S.players[from]){ S.players[from].online = true; }
+      else {
+        S.players[from] = {name:String(msg.name||'탐정').slice(0,8), x:6+Math.random()*2, z:5+Math.random()*2, ry:0, role:null, online:true};
+        S.order.push(from);
+        if(S.phase!=='lobby') S.players[from].role = assignLateRole();
+      }
+      hostSendAll({t:'toast', m:`🙋 ${S.players[from].name}님이 들어왔어요.`});
+      hostBroadcastState(); break;
+    }
+    case 'pos': if(p){ p.x=msg.x; p.z=msg.z; p.ry=msg.ry; p.mv=msg.mv; } break;
+    case 'pick': {
+      const st = S.items[msg.id];
+      if(!p || !st || st.holder || !canInvestigate()) return;
+      st.holder = from;
+      const def = SCENARIO.items.find(i=>i.id===msg.id);
+      hostSendAll({t:'toast', m:`👜 누군가 <b>${def.room}</b>에서 증거를 챙겼다…`});
+      hostBroadcastState(); break;
+    }
+    case 'share': {
+      const st = S.items[msg.id];
+      if(!p || !st || st.holder!==from || st.shared) return;
+      st.shared = true;
+      const def = SCENARIO.items.find(i=>i.id===msg.id);
+      hostSendAll({t:'toast', m:`📢 ${p.name}님이 「${def.name}」을(를) 공개했어요!`});
+      hostBroadcastState(); break;
+    }
+    case 'vote': {
+      if(!p || S.phase!=='vote' || !(msg.target in SCENARIO.roles)) return;
+      S.votes[from] = msg.target; hostBroadcastState();
+      const voters = S.order.filter(id=>S.players[id]?.online!==false);
+      if(voters.every(id=>S.votes[id])) hostSendAll({t:'toast', m:'🗳️ 모두 투표했어요! 방장이 결과를 공개할 수 있어요.'});
+      break;
+    }
+    case 'next': if(from==='host') hostNextPhase(); break;
+  }
+}
+function assignLateRole(){
+  const taken = new Set(Object.values(S.players).map(p=>p.role));
+  return ROLE_KEYS.find(k=>!taken.has(k)) || 'helper';
+}
+function hostNextPhase(){
+  const nx = NEXT[S.phase]; if(!nx) return;
+  if(nx==='intro'){
+    const keys = [...ROLE_KEYS].sort(()=>Math.random()-.5);
+    S.order.forEach((id,i)=>{ S.players[id].role = keys[i] || 'helper'; });
+    // everyone back to the hall
+    const tp = {};
+    S.order.forEach((id,i)=>{ const p=S.players[id]; p.x = 4.5+(i%3)*1.3; p.z = 5.5+Math.floor(i/3)*1.3; tp[id]=[p.x,p.z]; });
+    hostSendAll({t:'teleport', p:tp});
+  }
+  S.phase = nx;
+  S.phaseEnd = PHASES[nx].ms ? Date.now()+PHASES[nx].ms : 0;
+  hostBroadcastState();
+}
+
+/* ---------- message handling (all clients incl. host) ---------- */
+let lastPhase = null;
+function onMsg(msg){
+  switch(msg.t){
+    case 'state': {
+      if(!NET.isHost) S = msg.s;
+      phaseEndLocal = msg.rem ? Date.now()+msg.rem : 0;
+      syncAvatars(); updateHud();
+      if(S.phase !== lastPhase){ onPhaseChange(lastPhase, S.phase); lastPhase = S.phase; }
+      else refreshOpenPanels();
+      break;
+    }
+    case 'poses': for(const [id,v] of Object.entries(msg.p)){ if(id===me.id) continue; const a=avatars[id]; if(a){ a.tx=v[0]; a.tz=v[1]; a.try=v[2]; a.moving=!!v[3]; } } break;
+    case 'toast': toast(msg.m); break;
+    case 'teleport': { const v = msg.p[me.id]; if(v){ me.x=v[0]; me.z=v[1]; me.target=null; me.path=[]; } break; }
+  }
+}
+// periodic position sync
+setInterval(()=>{
+  if(!me.id) return;
+  if(NET.isHost){
+    const p = S.players.host; if(p){ p.x=me.x; p.z=me.z; p.ry=me.ry; p.mv=me.moving; }
+    const out = {}; for(const id of S.order){ const q=S.players[id]; if(q) out[id]=[+q.x.toFixed(2),+q.z.toFixed(2),+(q.ry||0).toFixed(2),q.mv?1:0]; }
+    for(const c of Object.values(NET.conns)) if(c.open) c.send({t:'poses', p:out});
+    if(S.phaseEnd && Date.now() > S.phaseEnd && (S.phase==='investigate'||S.phase==='discuss')) hostNextPhase();
+  } else send({t:'pos', x:+me.x.toFixed(2), z:+me.z.toFixed(2), ry:+me.ry.toFixed(2), mv:me.moving?1:0});
+}, 100);
+
+/* ============================================================
+   UI
+   ============================================================ */
+function toast(m){ const d=document.createElement('div'); d.className='toast'; d.innerHTML=m; $('#toasts').appendChild(d); setTimeout(()=>d.remove(), 4200); while($('#toasts').children.length>3) $('#toasts').firstChild.remove(); }
+let modalKind = null, modalArg = null, modalClosable = true;
+function showModal(html, closable=true, kind=null, arg=null){
+  $('#modalCard').innerHTML = (closable?'<button id="mClose" style="position:absolute;right:12px;top:12px;padding:6px 12px;z-index:2">✕</button>':'') + html;
+  $('#modal').classList.remove('hidden'); modalKind = kind; modalArg = arg; modalClosable = closable;
+  if(closable) $('#mClose').onclick = closeModal;
+}
+function closeModal(){ $('#modal').classList.add('hidden'); modalKind = null; stopMini(); }
+$('#modal').addEventListener('pointerdown', e=>{ if(e.target.id==='modal' && modalClosable) closeModal(); });
+
+function enterGame(){
+  $('#startScreen').classList.add('hidden');
+  ['#hud','#bottom','#hint'].forEach(s=>$(s).classList.remove('hidden'));
+  $('#roomPill').innerHTML = `방 코드 <b>${NET.code}</b>`;
+  $('#roomPill').onclick = ()=>{ navigator.clipboard?.writeText(NET.code); toast('📋 방 코드를 복사했어요: <b>'+NET.code+'</b>'); };
+  setTimeout(()=>$('#hint').classList.add('hidden'), 9000);
+  if(NET.isHost) toast(`방이 열렸어요! 친구들에게 코드 <b>${NET.code}</b>를 알려 주세요.`);
+}
+function myRole(){ const p=S.players[me.id]; return p?.role; }
+function roleDef(k){ return SCENARIO.roles[k] || SCENARIO.helper; }
+function updateHud(){
+  const ph = PHASES[S.phase];
+  let txt = ph.label;
+  if(S.phase==='lobby') txt += ` · ${S.order.filter(id=>S.players[id]).length}명`;
+  $('#phasePill').innerHTML = txt + (phaseEndLocal ? ` <b id="timer"></b>` : '');
+  const hb = $('#hostBtn');
+  hb.classList.toggle('hidden', !NET.isHost || !HOST_BTN[S.phase]);
+  hb.textContent = HOST_BTN[S.phase] || '';
+  $('#voteOpenBtn').classList.toggle('hidden', !(S.phase==='vote'||S.phase==='reveal'));
+  $('#voteOpenBtn').textContent = S.phase==='reveal' ? '🔎 진상 보기' : '🗳️ 투표';
+}
+$('#hostBtn').onclick = ()=>{
+  const msgs = {lobby:'지금 인원으로 게임을 시작할까요?\n(시작 후 들어온 사람은 남은 역할이나 조수 탐정이 돼요)', discuss:'투표를 시작할까요?', vote:'결과를 공개할까요?', investigate:'조사를 끝내고 토론으로 넘어갈까요?'};
+  if(msgs[S.phase] && !confirm(msgs[S.phase])) return;
+  send({t:'next'});
+};
+function onPhaseChange(from, to){
+  if(to==='intro') showIntro();
+  if(to==='investigate'){ closeModal(); toast('🔍 조사 시작! 반짝이는 물건을 찾아 조사하세요. (10분)'); }
+  if(to==='discuss'){ toast('💬 토론 시간! 증거를 공개하고 서로 추궁하세요. (5분)'); }
+  if(to==='vote'){ showVote(); }
+  if(to==='reveal'){ showReveal(); }
+  for(const id in items) items[id].spark.visible = canInvestigate() && !S.items[id].holder;
+  refreshItems();
+}
+function refreshItems(){
+  for(const id in items){
+    const st = S.items[id]; const it = items[id];
+    it.vis.visible = !st.holder;
+    it.trace.visible = !!st.holder;
+    it.spark.visible = canInvestigate() && !st.holder;
+  }
+}
+function refreshOpenPanels(){
+  refreshItems();
+  if(modalKind==='note') showNote(modalArg);
+  if(modalKind==='inspect') openInspect(modalArg, true);
+  if(modalKind==='vote') showVote();
+}
+
+function roleCardHtml(k){
+  const r = roleDef(k);
+  return `<div class="row" style="gap:12px;margin-bottom:8px"><div class="dot" style="background:${r.css}"></div>
+    <div><div class="jua" style="font-size:22px">${r.name} <span class="tag">${r.job}</span></div><div class="sub" style="margin:0">${r.public}</div></div></div>
+    <div class="secret"><h3>🤫 나만 아는 비밀</h3><p>${r.secret}</p><h3>👀 내가 본 것</h3><p>${r.knows}</p><h3>🎯 목표</h3><p>${r.goal}</p></div>`;
+}
+function showIntro(){
+  const k = myRole();
+  showModal(`<div class="stamp">TOP SECRET</div><p class="sub jua" style="margin:0">CASE #1121</p><h2 class="title">${SCENARIO.title}</h2>
+    <p style="white-space:pre-line">${SCENARIO.intro}</p><h3>당신의 역할</h3>${roleCardHtml(k)}
+    <p class="sub" style="margin-top:12px">🔒 다른 사람에게 화면을 보여 주지 마세요. 이 카드는 📒 수첩에서 다시 볼 수 있어요.</p>
+    ${NET.isHost ? '<p class="sub">방장: 모두 읽었으면 오른쪽 위 <b>조사 시작</b>을 눌러 주세요.</p>' : '<p class="sub">방장이 조사를 시작할 때까지 기다려 주세요.</p>'}`, true, 'intro');
+}
+
+/* ---------- inspect (dossier + exploded teardown mini view) ---------- */
+function openInspect(id, refresh=false){
+  const def = items[id].def, st = S.items[id];
+  const idx = SCENARIO.items.findIndex(i=>i.id===id)+1;
+  const mine = st.holder===me.id;
+  const gone = st.holder && !mine && !st.shared;
+  if(!gone) seen.add(id);
+  let body, actions='';
+  if(gone){
+    body = `<p>여기엔 <b>무언가 있었던 흔적</b>만 남아 있다. 누군가 먼저 챙겨 간 것 같다…</p>`;
+  } else {
+    body = `<p>${def.desc}</p>`;
+    if(!st.holder) actions = `<button class="primary" id="pickBtn" style="width:100%">👜 챙기기 (다른 사람은 못 보게 돼요)</button>`;
+    else if(mine && !st.shared) actions = `<button class="navy" id="shareBtn" style="width:100%">📢 모두에게 공개</button>`;
+    else if(st.shared) actions = `<p class="sub">📢 모두에게 공개된 증거예요.</p>`;
+  }
+  const html = `<div class="stamp">EVIDENCE #${String(idx).padStart(2,'0')}</div>
+    <p class="sub jua" style="margin:0">${def.room}</p><h2 class="title" style="font-size:26px">${gone?'사라진 증거':def.name}</h2>
+    ${gone?'':'<canvas id="miniView"></canvas>'}${body}<div class="stack" style="margin-top:10px">${actions}</div>`;
+  if(refresh && modalKind==='inspect' && modalArg===id){ // keep mini view running; rebuild text only
+    stopMini();
+  }
+  showModal(html, true, 'inspect', id);
+  if(!gone) startMini(id);
+  $('#pickBtn')?.addEventListener('click', ()=>{ send({t:'pick', id}); });
+  $('#shareBtn')?.addEventListener('click', ()=>{ send({t:'share', id}); });
+}
+let mini = null;
+function startMini(id){
+  const cv = $('#miniView'); if(!cv) return;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  const r = new THREE.WebGLRenderer({canvas:cv, antialias:true, alpha:true});
+  r.setPixelRatio(Math.min(devicePixelRatio,2)); r.setSize(w,h,false); r.outputColorSpace = THREE.SRGBColorSpace;
+  const sc = new THREE.Scene();
+  sc.add(new THREE.HemisphereLight(0xffffff, 0xb59b7a, 1.6)); const dl=new THREE.DirectionalLight(0xffffff,1.4); dl.position.set(2,3,4); sc.add(dl);
+  const obj = buildItemVis(id);
+  const box = new THREE.Box3().setFromObject(obj); const ctr = box.getCenter(new THREE.Vector3()); const size = box.getSize(new THREE.Vector3()).length() || 1;
+  obj.position.sub(ctr); const holder = new THREE.Group(); holder.add(obj); holder.scale.setScalar(1.7/size); sc.add(holder);
+  // exploded teardown: remember base positions & directions
+  const parts = obj.children.map(m=>{ const p0=m.position.clone(); const d=p0.clone().sub(ctr); if(d.lengthSq()<1e-4) d.set(0,1,0); d.normalize(); return {m,p0,d}; });
+  const cam = new THREE.PerspectiveCamera(35, w/h, .1, 50); cam.position.set(0,1.2,4.2); cam.lookAt(0,0,0);
+  let t0 = performance.now(), raf;
+  const loop = ()=>{ const t=(performance.now()-t0)/1000;
+    holder.rotation.y = t*.8; holder.rotation.x = Math.sin(t*.6)*.25;
+    const ex = Math.max(0, Math.sin(t*1.1))*.18*size;
+    for(const p of parts) p.m.position.copy(p.p0).addScaledVector(p.d, ex);
+    r.render(sc, cam); raf = requestAnimationFrame(loop); };
+  loop();
+  mini = {r, stop:()=>{ cancelAnimationFrame(raf); r.dispose(); }};
+}
+function stopMini(){ if(mini){ mini.stop(); mini=null; } }
+
+/* ---------- notebook ---------- */
+$('#noteBtn').onclick = ()=> showNote('role');
+function showNote(tab='role'){
+  const k = myRole();
+  const tabs = `<div class="tabs"><button data-t="role" class="${tab==='role'?'on':''}">내 역할</button><button data-t="ev" class="${tab==='ev'?'on':''}">증거</button><button data-t="who" class="${tab==='who'?'on':''}">인물</button></div>`;
+  let body = '';
+  if(tab==='role'){
+    body = k ? roleCardHtml(k) : `<p>아직 역할이 없어요. 방장이 게임을 시작하면 비밀 역할 카드가 나와요.</p><p class="sub">대기실에서는 산장을 자유롭게 둘러볼 수 있어요.</p>`;
+  }
+  if(tab==='ev'){
+    const list = SCENARIO.items.filter(it=> seen.has(it.id) || S.items[it.id].shared || S.items[it.id].holder===me.id);
+    body = list.length ? list.map(it=>{ const st=S.items[it.id];
+      const badges = (st.holder===me.id?'<span class="tag">👜 내가 챙김</span>':'') + (st.shared?'<span class="tag">📢 공개됨</span>':'') + (!st.holder?'<span class="tag">현장에 있음</span>':'');
+      const shareBtn = st.holder===me.id && !st.shared ? `<button class="navy" data-share="${it.id}" style="margin-top:6px;padding:8px 12px;font-size:14px">📢 모두에게 공개</button>` : '';
+      return `<div class="ev"><div class="n">${it.name} <span class="sub" style="font-size:12px">· ${it.room}</span></div><div>${badges}</div><p style="font-size:14px">${it.desc}</p>${shareBtn}</div>`; }).join('')
+      : `<p>아직 조사한 증거가 없어요.</p><p class="sub">반짝이는 ✦ 물건을 찾아 터치해 보세요.</p>`;
+    const missing = SCENARIO.items.length - list.length;
+    body += `<p class="sub">현장에 증거는 모두 ${SCENARIO.items.length}개. 아직 못 본 증거 ${missing}개.</p>`;
+  }
+  if(tab==='who'){
+    const byRole = {}; S.order.forEach(id=>{ const p=S.players[id]; if(p?.role) byRole[p.role]=p; });
+    body = `<p style="white-space:pre-line;font-size:14px">${SCENARIO.intro}</p>` + ROLE_KEYS.map(rk=>{ const r=SCENARIO.roles[rk]; const p=byRole[rk];
+      return `<div class="who"><div class="dot" style="background:${r.css}"></div><div><div class="jua" style="font-size:17px">${r.name} <span class="tag">${r.job}</span> ${p?`<span class="tag">🎮 ${p.name}</span>`:(S.phase==='lobby'?'':'<span class="tag">NPC</span>')}</div>
+        <div style="font-size:14px">${r.public}</div>${(!p && S.phase!=='lobby')?`<div style="font-size:14px;margin-top:4px">📝 진술: ${r.npc}</div>`:''}</div></div>`; }).join('');
+  }
+  showModal(`<h2 class="title" style="font-size:24px">📒 수첩</h2>${tabs}${body}`, true, 'note', tab);
+  document.querySelectorAll('.tabs button').forEach(b=> b.onclick = ()=> showNote(b.dataset.t));
+  document.querySelectorAll('[data-share]').forEach(b=> b.onclick = ()=> send({t:'share', id:b.dataset.share}));
+}
+
+/* ---------- vote & reveal ---------- */
+$('#voteOpenBtn').onclick = ()=> S.phase==='reveal' ? showReveal() : showVote();
+function showVote(){
+  const my = S.votes[me.id];
+  const voters = S.order.filter(id=>S.players[id]?.online!==false);
+  const done = voters.filter(id=>S.votes[id]).length;
+  const btns = ROLE_KEYS.map(rk=>{ const r=SCENARIO.roles[rk];
+    return `<button class="voteBtn ${my===rk?'on':''}" data-v="${rk}"><span class="dot" style="background:${r.css}"></span><span><b>${r.name}</b> <span class="tag">${r.job}</span></span></button>`; }).join('');
+  showModal(`<div class="stamp">VOTE</div><h2 class="title">범인은 누구?</h2><p class="sub">한 명을 골라 주세요. 결과 공개 전까지 바꿀 수 있어요.</p>${btns}
+    <p class="sub">투표 완료 ${done} / ${voters.length}명</p>`, true, 'vote');
+  document.querySelectorAll('[data-v]').forEach(b=> b.onclick = ()=> send({t:'vote', target:b.dataset.v}));
+}
+function showReveal(){
+  const tally = {}; ROLE_KEYS.forEach(k=>tally[k]=0);
+  Object.values(S.votes).forEach(v=>{ if(v in tally) tally[v]++; });
+  const max = Math.max(0, ...Object.values(tally));
+  const top = ROLE_KEYS.filter(k=>tally[k]===max && max>0);
+  const caught = top.length===1 && top[0]===SCENARIO.culprit;
+  const total = Object.values(tally).reduce((a,b)=>a+b,0) || 1;
+  const k = myRole();
+  const iAmCulprit = k===SCENARIO.culprit;
+  const verdict = caught ? (iAmCulprit ? '😱 들켰다… 범인 패배!' : '🎉 범인 검거 성공!') : (iAmCulprit ? '😈 완전 범죄 성공!' : '💨 범인이 빠져나갔다…');
+  const bars = ROLE_KEYS.map(rk=>{ const r=SCENARIO.roles[rk];
+    return `<div style="margin:6px 0"><div class="row" style="justify-content:space-between"><span><b>${r.name}</b> ${rk===SCENARIO.culprit?'<span class="tag" style="background:#c8423a;color:#fff">범인</span>':''}</span><span>${tally[rk]}표</span></div>
+      <div class="bar" style="width:${Math.max(3,tally[rk]/total*100)}%;background:${rk===SCENARIO.culprit?'#c8423a':'#8a7b70'}"></div></div>`; }).join('');
+  showModal(`<div class="stamp">CASE CLOSED</div><h2 class="title">${verdict}</h2>${bars}<h3>📜 사건의 진상</h3><p style="white-space:pre-line">${SCENARIO.truth}</p>
+    <h3>🤫 모두의 비밀</h3>${ROLE_KEYS.map(rk=>`<p style="font-size:14px"><b>${SCENARIO.roles[rk].name}</b>: ${SCENARIO.roles[rk].secret}</p>`).join('')}`, true, 'reveal');
+}
+
+/* ---------- start screen ---------- */
+try{ $('#nameInput').value = localStorage.getItem('malang-name') || ''; }catch(e){}
+const urlCode = new URLSearchParams(location.search).get('room'); if(urlCode) $('#codeInput').value = urlCode.toUpperCase();
+function getName(){ const n = $('#nameInput').value.trim(); if(!n){ startErr('닉네임을 입력해 주세요.'); return null; } try{ localStorage.setItem('malang-name', n); }catch(e){} return n; }
+$('#createBtn').onclick = ()=>{ const n=getName(); if(!n) return; $('#createBtn').disabled=$('#joinBtn').disabled=true; $('#startErr').textContent='방을 만드는 중…'; createRoom(n); };
+$('#joinBtn').onclick = ()=>{ const n=getName(); if(!n) return; const c=$('#codeInput').value.trim().toUpperCase(); if(c.length!==4){ startErr('4자리 방 코드를 입력해 주세요.'); return; }
+  $('#createBtn').disabled=$('#joinBtn').disabled=true; $('#startErr').textContent='접속하는 중…'; joinRoom(n,c); };
+$('#inspectBtn').onclick = ()=>{ const id = nearestItem(); if(id) openInspect(id); };
+
+/* ============================================================
+   LOOP
+   ============================================================ */
+function resize(){ renderer.setSize(innerWidth, innerHeight, false); camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix(); }
+addEventListener('resize', resize); resize();
+const clock = new THREE.Clock();
+const camPos = new THREE.Vector3(7, 12, 16);
+let myAvatarPreview = null;
+function tick(){
+  const dt = Math.min(clock.getDelta(), .05), t = clock.elapsedTime;
+  // local movement
+  if(me.id && me.target){
+    const dx = me.target.x-me.x, dz = me.target.z-me.z, d = Math.hypot(dx,dz);
+    if(d < (me.target.wp ? .35 : .08)){ me.target = me.path?.length ? me.path.shift() : null; if(!me.target) me.moving=false; }
+    else {
+      const sp = 4.2*dt, step = Math.min(sp,d), nx = me.x+dx/d*step, nz = me.z+dz/d*step;
+      let ok=false;
+      if(!blocked(nx,nz)){ me.x=nx; me.z=nz; ok=true; }
+      else if(!blocked(nx,me.z)){ me.x=nx; ok=true; }
+      else if(!blocked(me.x,nz)){ me.z=nz; ok=true; }
+      if(!ok){ me.target=null; me.path=[]; me.moving=false; } else { me.moving=true; me.ry = Math.atan2(dx,dz); }
+    }
+    if(pendingInspect){ const p=items[pendingInspect].group.position; if(Math.hypot(p.x-me.x,p.z-me.z)<1.9){ const id=pendingInspect; pendingInspect=null; me.target=null; me.moving=false; openInspect(id);} else if(!me.target) pendingInspect=null; }
+  } else me.moving=false;
+  // avatars
+  for(const [id,a] of Object.entries(avatars)){
+    if(id===me.id){ a.tx=me.x; a.tz=me.z; a.try=me.ry; a.moving=me.moving; a.group.position.set(me.x,0,me.z); }
+    else { a.group.position.x += (a.tx-a.group.position.x)*Math.min(1,dt*10); a.group.position.z += (a.tz-a.group.position.z)*Math.min(1,dt*10); }
+    let dr = a.try - a.group.rotation.y; dr = Math.atan2(Math.sin(dr),Math.cos(dr)); a.group.rotation.y += dr*Math.min(1,dt*12);
+    a.walkT += a.moving ? dt*12 : 0;
+    a.body.position.y = a.moving ? Math.abs(Math.sin(a.walkT))*.12 : Math.sin(t*2+id.length)*.02;
+    a.body.rotation.z = a.moving ? Math.sin(a.walkT)*.08 : 0;
+  }
+  // items
+  for(const id in items){ const s=items[id].spark; s.rotation.y = t*2; s.position.y += (Math.sin(t*3+id.length)*.002); s.children[0].scale.setScalar(1+Math.sin(t*4)*.15); }
+  const ni = (me.id && canInvestigate()) ? nearestItem() : null;
+  $('#inspectBtn').classList.toggle('hidden', !ni);
+  // camera
+  const fx = me.id ? me.x : 0, fz = me.id ? me.z : 2;
+  const k = camera.aspect < 1 ? 1.5 : 1; // portrait phones: pull camera back
+  const want = new THREE.Vector3(fx, 10.5*k, fz+7.5*k);
+  if(!me.id){ want.set(Math.sin(t*.12)*14, 14, 6+Math.cos(t*.12)*14); }
+  camPos.lerp(want, Math.min(1, dt*3)); camera.position.copy(camPos); camera.lookAt(fx, 0.5, me.id? fz : 2);
+  sun.position.set(fx+6, 16, fz+8); sun.target.position.set(fx,0,fz);
+  // fx
+  fire.scale.setScalar(1+Math.sin(t*9)*.12); fireLight.intensity = 5.5+Math.sin(t*11)*1.2;
+  smoke.position.y = 1.2 + (t*.4%1)*1.2; smoke.material.opacity = 1; smoke.scale.setScalar(1+(t*.4%1));
+  const sp = snow.geometry.attributes.position;
+  for(let i=0;i<SNOW;i++){ let y=sp.array[i*3+1]-dt*1.1; if(y<0) y=12; sp.array[i*3+1]=y; sp.array[i*3]+=Math.sin(t+i)*dt*.15; }
+  sp.needsUpdate = true;
+  if(markerT>0){ markerT-=dt*1.5; marker.material.opacity=Math.max(0,markerT); marker.scale.setScalar(1+(1-markerT)*.5); if(markerT<=0) marker.visible=false; }
+  // timer
+  const tm = $('#timer'); if(tm && phaseEndLocal){ const r=Math.max(0,phaseEndLocal-Date.now()); tm.textContent = `${Math.floor(r/60000)}:${String(Math.floor(r/1000)%60).padStart(2,'0')}`; }
+  renderer.render(scene, camera);
+  requestAnimationFrame(tick);
+}
+tick();
+// debug hook for testing
+window.__game = { get S(){return S}, me, NET, goTo, items, camera };
+</script>
+</body>
+</html>
