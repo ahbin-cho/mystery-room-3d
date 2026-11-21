@@ -29,6 +29,39 @@ export function doorOrientation(door, a, b) {
   return null;
 }
 
+// Grid cells a door opens, shared by the collision grid (core/grid.js) and the block walls (world.js),
+// so the door you see is exactly the door you can walk through.
+// Cell indices are relative to (ox, oz): cell (i, j) covers [ox + i*cell, ox + (i+1)*cell) x [oz + j*cell, ...).
+// Returns null when the door is not on a wall shared by a and b, else
+//   { o: 'v' | 'h', open: [[i, j], ...] (both rooms' boundary cells over the door width),
+//     posts: [[i, j], ...] (the wall cells just beyond each end of the opening, both rooms) }.
+export function doorCells(door, a, b, cell, ox = 0, oz = 0) {
+  const o = doorOrientation(door, a, b);
+  if (!o) return null;
+  const half = door.width / 2;
+  const span = (c, org) => [
+    Math.floor((c - half - org) / cell + EPS),
+    Math.ceil((c + half - org) / cell - EPS) - 1,
+  ];
+  const open = [], posts = [];
+  if (o === 'v') {
+    const ic = Math.round((door.x - ox) / cell); // wall cells are ic-1 (west room) and ic (east room)
+    const [j0, j1] = span(door.z, oz);
+    for (const i of [ic - 1, ic]) {
+      for (let j = j0; j <= j1; j++) open.push([i, j]);
+      posts.push([i, j0 - 1], [i, j1 + 1]);
+    }
+  } else {
+    const jc = Math.round((door.z - oz) / cell);
+    const [i0, i1] = span(door.x, ox);
+    for (const j of [jc - 1, jc]) {
+      for (let i = i0; i <= i1; i++) open.push([i, j]);
+      posts.push([i0 - 1, j], [i1 + 1, j]);
+    }
+  }
+  return { o, open, posts };
+}
+
 export function validateMap(map) {
   const errors = [];
   const byId = new Map();

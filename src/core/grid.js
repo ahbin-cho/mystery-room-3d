@@ -1,5 +1,5 @@
 // Collision grid: Uint8Array, 0 = free, 1 = blocked. One grid per floor.
-import { doorOrientation } from './map.js';
+import { doorCells } from './map.js';
 
 export function buildGrid(map, floor) {
   const cell = map.cell;
@@ -24,22 +24,9 @@ export function buildGrid(map, floor) {
   for (const d of map.doors || []) {
     const a = rooms.get(d.a), b = rooms.get(d.b);
     if (!a || a.floor !== floor) continue;
-    const o = doorOrientation(d, a, b);
-    if (!o) continue;
-    const half = d.width / 2;
-    const span = (c, org) => [
-      Math.floor((c - half - org) / cell + 1e-6),
-      Math.ceil((c + half - org) / cell - 1e-6) - 1,
-    ];
-    if (o === 'v') {
-      const ic = toCell(d.x, ox); // wall cells are ic-1 and ic
-      const [j0, j1] = span(d.z, oz);
-      for (let j = j0; j <= j1; j++) for (const i of [ic - 1, ic]) data[j * w + i] = 0;
-    } else {
-      const jc = toCell(d.z, oz);
-      const [i0, i1] = span(d.x, ox);
-      for (let i = i0; i <= i1; i++) for (const j of [jc - 1, jc]) data[j * w + i] = 0;
-    }
+    const dc = doorCells(d, a, b, cell, ox, oz);
+    if (!dc) continue;
+    for (const [i, j] of dc.open) data[j * w + i] = 0;
   }
 
   for (const s of map.solids || []) {

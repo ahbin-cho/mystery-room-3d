@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { VoxelBuilder } from './voxel.js';
 import { PROPS, frame, entryFootprint } from './props.js';
-import { doorOrientation } from './core/map.js';
+import { doorCells } from './core/map.js';
 
 const C = 0.5; // grid cell / big block
 const WALL_H = 3;
@@ -80,16 +80,13 @@ export function buildWorld(caseData) {
     for (const d of MAP.doors || []) {
       const A = roomById.get(d.a), B = roomById.get(d.b);
       if (!A || A.floor !== f) continue;
-      const o = doorOrientation(d, A, B);
-      if (!o) continue;
+      const dc = doorCells(d, A, B, C); // same cells buildGrid opens (origin 0,0 = world cell indices)
+      if (!dc) continue;
+      const o = dc.o;
+      for (const [i, j] of dc.open) openCells.add(ck(i, j));
+      for (const [i, j] of dc.posts) postCells.add(ck(i, j));
       const half = d.width / 2;
       const lo = (o === 'v' ? d.z : d.x) - half, hi = (o === 'v' ? d.z : d.x) + half;
-      const s0 = Math.floor(lo / C + EPS), s1 = Math.ceil(hi / C - EPS) - 1;
-      const line = ci(o === 'v' ? d.x : d.z); // wall cells are line-1 and line
-      for (const w of [line - 1, line]) {
-        for (let s = s0; s <= s1; s++) openCells.add(o === 'v' ? ck(w, s) : ck(s, w));
-        for (const s of [s0 - 1, s1 + 1]) postCells.add(o === 'v' ? ck(w, s) : ck(s, w));
-      }
       // Two leaves swung flat against the wall on B's side, when nothing stands there.
       const bAfter = o === 'v' ? Math.abs(B.rect[0] - d.x) < EPS : Math.abs(B.rect[1] - d.z) < EPS;
       const face = (o === 'v' ? d.x : d.z) + (bAfter ? C : -C);
