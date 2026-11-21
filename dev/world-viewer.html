@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>World viewer (dev)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+html,body{margin:0;height:100%;background:#0e1424;overflow:hidden;touch-action:none}
+canvas{display:block}
+#hud{position:fixed;left:8px;top:8px;color:#eef;font:12px/1.4 monospace;white-space:pre;pointer-events:none;text-shadow:0 1px 2px #000}
+#bar{position:fixed;left:8px;bottom:8px;right:8px;display:flex;flex-wrap:wrap;gap:4px}
+#bar button,#bar select{font:13px sans-serif;padding:6px 9px;border-radius:6px;border:0;background:#f4e6c8;color:#3a2a1e}
+#bar button.on{background:#7a4a1a;color:#fff}
+</style>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+</head>
+<body>
+<div id="hud"></div>
+<div id="bar">
+  <button id="f0" class="on">1층</button><button id="f1">2층</button>
+  <select id="room"><option value="">방으로 이동…</option></select>
+  <button id="top">위에서</button><button id="game">게임 시점</button><button id="mk">증거 표시</button>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CASE } from '../src/cases/owl-manor.js';
+import { buildWorld, setVisibleFloor, makeSceneLights } from '../src/world.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0e1424);
+scene.fog = new THREE.Fog(0x0e1424, 30, 70);
+scene.add(makeSceneLights());
+
+const t0 = performance.now();
+const world = buildWorld(CASE);
+const buildMs = performance.now() - t0;
+world.floors.forEach(g => scene.add(g));
+
+const cam = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 200);
+const controls = new OrbitControls(cam, renderer.domElement);
+controls.enableDamping = true;
+let floor = 0;
+
+function view(cx, cz, kind = 'game', dist = 9) {
+  const y = floor * 3;
+  controls.target.set(cx, y + 0.5, cz);
+  if (kind === 'top') cam.position.set(cx, y + dist * 2.4, cz + 0.01);
+  else cam.position.set(cx, y + dist * 1.1, cz + dist * 0.6);
+  controls.update();
+}
+function setFloor(f) {
+  floor = f;
+  setVisibleFloor(world, f);
+  document.getElementById('f0').classList.toggle('on', f === 0);
+  document.getElementById('f1').classList.toggle('on', f === 1);
+  view(11.5, 10, 'top', 11);
+}
+function gotoRoom(id, kind = 'game') {
+  const r = CASE.MAP.rooms.find(x => x.id === id);
+  if (r.floor !== floor) setFloor(r.floor);
+  const span = Math.max(r.rect[2] - r.rect[0], r.rect[3] - r.rect[1]);
+  view((r.rect[0] + r.rect[2]) / 2, (r.rect[1] + r.rect[3]) / 2, kind, Math.max(6.5, span * 0.95));
+}
+const sel = document.getElementById('room');
+CASE.MAP.rooms.forEach(r => sel.add(new Option(`${r.name} (${r.floor + 1}층)`, r.id)));
+sel.onchange = () => sel.value && gotoRoom(sel.value);
+document.getElementById('f0').onclick = () => setFloor(0);
+document.getElementById('f1').onclick = () => setFloor(1);
+document.getElementById('top').onclick = () => view(controls.target.x, controls.target.z, 'top', 11);
+document.getElementById('game').onclick = () => view(controls.target.x, controls.target.z, 'game', 8);
+// Debug: pink pins on every evidence / stair / passage marker.
+const pins = [];
+const pinMat = new THREE.MeshBasicMaterial({ color: 0xff3d9a, depthTest: false });
+const pinGeo = new THREE.SphereGeometry(0.09, 8, 6);
+const markers = [...Object.values(world.itemMarkers),
+  ...Object.values(world.stairMarkers).flatMap(s => [s.a, s.b]),
+  ...Object.values(world.passageMarkers).flatMap(s => [s.a, s.b])];
+for (const m of markers) { const p = new THREE.Mesh(pinGeo, pinMat); p.renderOrder = 9; p.visible = false; m.add(p); pins.push(p); }
+document.getElementById('mk').onclick = e => { const on = !pins[0].visible; pins.forEach(p => { p.visible = on; }); e.target.classList.toggle('on', on); };
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix();
+});
+
+// FPS from performance.now over the last 60 frames.
+const times = [];
+let fps = 0;
+const hud = document.getElementById('hud');
+function instances() {
+  let n = 0;
+  world.floors[floor].traverse(o => { if (o.isInstancedMesh && o.visible) n += o.count; });
+  return n;
+}
+let frameNo = 0;
+(function loop() {
+  const now = performance.now();
+  times.push(now);
+  if (times.length > 61) times.shift();
+  if (times.length > 1) fps = (times.length - 1) * 1000 / (times[times.length - 1] - times[0]);
+  controls.update();
+  renderer.render(scene, cam);
+  if (frameNo++ % 15 === 0) {
+    hud.textContent = `floor ${floor + 1}  fps ${fps.toFixed(1)}  draw calls ${renderer.info.render.calls}\n`
+      + `tris ${renderer.info.render.triangles}  blocks ${instances()}  build ${buildMs.toFixed(0)} ms`;
+  }
+  requestAnimationFrame(loop);
+})();
+
+setFloor(0);
+window.__ = { pins, THREE, renderer, scene, cam, controls, world, CASE, setFloor, gotoRoom, view,
+  stats: () => ({ floor, fps: +fps.toFixed(1), calls: renderer.info.render.calls, tris: renderer.info.render.triangles, blocks: instances(), buildMs: Math.round(buildMs) }) };
+</script>
+</body>
+</html>

@@ -1,5 +1,7 @@
 // 사건 데이터: 「하얀 부엉이 저택 사건」 (스펙 4.2 · 4.4 · 4.6 · 4.7)
 // 순수 데이터. 좌표 단위는 m, 0.5m 격자. pos = [x, 바닥에서의 높이, z].
+import { DECOR } from './owl-manor-decor.js';
+import { solidsFromDecor } from '../props.js';
 
 const light = (color, intensity) => ({ color, intensity });
 
@@ -44,8 +46,10 @@ const MAP = {
     // 서재 책장 뒤 ↔ 온실 화분대 뒤. 처음엔 숨겨져 있음(발견 규칙은 게임 로직 담당).
     { id: 'secret', a: { room: 'study', x: 22, z: 11.5 }, b: { room: 'conservatory', x: 1.5, z: 1.5 } },
   ],
-  solids: [], // Task 6에서 가구로 채움
+  solids: [], // 아래에서 가구 배치(DECOR)로 채움
 };
+// 가구가 차지하는 칸 = 충돌 영역. 0.5m 격자 안쪽으로 맞춰 문·증거·계단 끝을 막지 않는다 (tests/reach.test.js).
+MAP.solids = solidsFromDecor(DECOR.rooms, MAP.rooms);
 
 const ROLES = {
   yujin: {
@@ -195,4 +199,5 @@ export const CASE = {
   ITEMS,
   CHAINS,
   PHASES,
+  DECOR,
 };
