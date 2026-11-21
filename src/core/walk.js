@@ -28,6 +28,37 @@ export function joystickVector(dx, dy, radius = STICK_RADIUS, dead = STICK_DEAD)
   return { x: (dx / len) * mag, z: (dy / len) * mag, mag, kx, ky };
 }
 
+// Held keyboard keys (KeyboardEvent.code) → world move direction, same mapping as the joystick:
+// W / ArrowUp = north (-z), S / ArrowDown = south, A / ArrowLeft = west (-x), D / ArrowRight = east.
+// Diagonals are normalised, so full speed is never exceeded; opposite keys cancel.
+const KEY_DIRS = { KeyW: 'n', ArrowUp: 'n', KeyS: 's', ArrowDown: 's', KeyA: 'w', ArrowLeft: 'w', KeyD: 'e', ArrowRight: 'e' };
+export const isMoveKey = code => code in KEY_DIRS;
+export function keysVector(held) {
+  let n = false, s = false, w = false, e = false; // W and ArrowUp together still count once
+  for (const code of held) {
+    const d = KEY_DIRS[code];
+    if (d === 'n') n = true; else if (d === 's') s = true; else if (d === 'w') w = true; else if (d === 'e') e = true;
+  }
+  const x = (e ? 1 : 0) - (w ? 1 : 0), z = (s ? 1 : 0) - (n ? 1 : 0);
+  if (!x && !z) return { x: 0, z: 0, mag: 0 };
+  const k = x && z ? Math.SQRT1_2 : 1;
+  return { x: x * k, z: z * k, mag: 1 };
+}
+
+// Interact target for the keyboard: the nearest of `targets` ({x, z, ...}) on pos's floor that is
+// within `reach` AND in the same room as the player (never through a wall). null if none.
+export function nearestTarget(map, pos, targets, reach = ARRIVE) {
+  const here = roomAt(map, pos.floor, pos.x, pos.z);
+  if (here === null) return null;
+  let best = null, bd = reach;
+  for (const t of targets) {
+    const d = Math.hypot(t.x - pos.x, t.z - pos.z);
+    if (d > bd || roomAt(map, pos.floor, t.x, t.z) !== here) continue;
+    bd = d; best = t;
+  }
+  return best;
+}
+
 // Nearest walkable point to (x, z) within `maxR` m (searching outward in half-cell rings), or null.
 export function nearestFree(g, x, z, maxR = 1.0, r = BODY) {
   if (!isBlocked(g, x, z, r)) return { x, z };

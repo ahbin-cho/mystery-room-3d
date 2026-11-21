@@ -110,3 +110,28 @@ test('every case interact target lies in its own room, so it can be arrived at',
   for (const it of CASE.ITEMS) assert.equal(roomOf(it.room, it.pos[0], it.pos[2]), it.room, `item ${it.id}`);
   for (const s of [...MAP.stairs, ...MAP.passages]) for (const e of [s.a, s.b]) assert.equal(roomOf(e.room, e.x, e.z), e.room, `${s.id} end in ${e.room}`);
 });
+
+test('keys: WASD and arrows map like the joystick, diagonals normalised, opposites cancel', async () => {
+  const { keysVector, isMoveKey } = await import('../src/core/walk.js');
+  const v = (...k) => keysVector(new Set(k));
+  assert.deepEqual(v('KeyW'), { x: 0, z: -1, mag: 1 });
+  assert.deepEqual(v('ArrowRight'), { x: 1, z: 0, mag: 1 });
+  const d = v('KeyW', 'KeyD');
+  assert.ok(near(Math.hypot(d.x, d.z), 1) && d.x > 0 && d.z < 0, 'diagonal is unit length');
+  assert.deepEqual(v('KeyW', 'ArrowUp'), { x: 0, z: -1, mag: 1 }, 'same direction twice is not faster');
+  assert.equal(v('KeyA', 'KeyD').mag, 0);
+  assert.equal(v('KeyE').mag, 0);
+  assert.ok(isMoveKey('ArrowDown') && !isMoveKey('Space'));
+});
+
+test('keyboard interact: nearest target within reach and in the same room only', async () => {
+  const { nearestTarget } = await import('../src/core/walk.js');
+  const pos = { floor: 0, x: 3.15, z: 3.0 };
+  const through = { id: 'b', x: 4.7, z: 3.0 };      // 1.55 m, but in room B behind the wall
+  const far = { id: 'far', x: 1.0, z: 1.0 };        // same room, > 1.6 m
+  const close = { id: 'close', x: 2.4, z: 2.4 };    // same room, ~0.96 m
+  const closer = { id: 'closer', x: 3.0, z: 2.5 };  // same room, ~0.52 m
+  assert.equal(nearestTarget(M, pos, [through, far]), null);
+  assert.equal(nearestTarget(M, pos, [through, far, close]).id, 'close');
+  assert.equal(nearestTarget(M, pos, [close, closer, through]).id, 'closer');
+});

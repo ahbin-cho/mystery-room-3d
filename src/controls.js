@@ -2,7 +2,7 @@
 //
 //   const controls = createControls({ canvas, camera, map, world, getState, me,
 //     onInteract(target), onStairs(id), onPassage(),
-//     caseData?, pid?, onBlocked?(reason) });
+//     caseData?, pid?, onBlocked?(reason: 'unreachable' | 'stuck' | 'nothing-near') });
 //   each frame: controls.update(dt)          (moves `me`, places the camera, fades walls)
 //   host confirmed a floor change: controls.setFloor(floor)  (main also teleports me.x / me.z)
 //   controls.dispose()                        (removes every listener, DOM node and fade mesh)
@@ -15,6 +15,10 @@
 // Joystick: a touch starting in the bottom-left third of the canvas; knob travel 60 px = 3.6 m/s.
 // Screen up is north (-z): the camera never rotates, it looks north from behind/above the player
 // (the world is dressed for that view). A quick tap in the joystick zone still counts as a tap.
+// Keyboard (PC): WASD / arrow keys move exactly like the joystick (normalised diagonals, cancel any route);
+// E / Space interacts with the nearest marker within 1.6 m in the player's own room. Keys are ignored
+// while an input / textarea / select / contenteditable has focus, and all held keys are dropped on
+// window blur or when the page is hidden. Mouse clicks are taps.
 // Tap: an evidence / stairs / passage marker near the tap (screen space) → walk there and fire its
 // callback within 1.6 m; otherwise the floor point under the tap → walk there.
 //
@@ -27,7 +31,7 @@
 import * as THREE from 'three';
 import { buildGrid, isBlocked, moveWithSlide } from './core/grid.js';
 import { roomAt } from './core/map.js';
-import { joystickVector, nearestFree, planRoute, stepRoute, navOptions, SPEED, STICK_RADIUS, ARRIVE } from './core/walk.js';
+import { joystickVector, keysVector, isMoveKey, nearestTarget, nearestFree, planRoute, stepRoute, navOptions, SPEED, STICK_RADIUS, ARRIVE } from './core/walk.js';
 
 const CAM_UP = 7.2, CAM_BACK = 4.6;  // landscape offset from the player (m)
 const PORTRAIT_K = 1.5;               // portrait screens (aspect < 1) sit 1.5x farther back
@@ -115,6 +119,28 @@ export function createControls({ canvas, camera, map, world, getState, me, onInt
   canvas.addEventListener('pointerup', onUp);
   canvas.addEventListener('pointercancel', onUp);
 
+  // ── keyboard ──
+  const held = new Set();
+  const typing = () => {
+    const el = document.activeElement;
+    return !!el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName));
+  };
+  function onKeyDown(e) {
+    if (typing() || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (isMoveKey(e.code)) { held.add(e.code); e.preventDefault(); return; }
+    if (e.code === 'KeyE' || e.code === 'Space') {
+      e.preventDefault(); // Space would scroll / click a focused button
+      if (!e.repeat) interactNearest();
+    }
+  }
+  function onKeyUp(e) { held.delete(e.code); }
+  const releaseKeys = () => held.clear();
+  const onVisibility = () => { if (document.visibilityState === 'hidden') held.clear(); };
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  window.addEventListener('blur', releaseKeys);
+  document.addEventListener('visibilitychange', onVisibility);
+
   // ── taps ──
   const v3 = new THREE.Vector3();
   function markerCandidates() {
@@ -147,9 +173,7 @@ export function createControls({ canvas, camera, map, world, getState, me, onInt
     const hit = pickMarker(px, py, r.width, r.height);
     if (hit) {
       const t = hit.target, pos = t.marker.getWorldPosition(v3);
-      const fire = t.kind === 'item' ? () => onInteract?.({ kind: 'item', id: t.id, marker: t.marker })
-        : t.kind === 'stairs' ? () => onStairs?.(t.id) : () => onPassage?.();
-      goTo({ floor: me.floor, x: pos.x, z: pos.z }, ARRIVE, fire);
+      goTo({ floor: me.floor, x: pos.x, z: pos.z }, ARRIVE, () => fireTarget(t));
       return;
     }
     ndc.set((px / r.width) * 2 - 1, -(py / r.height) * 2 + 1);
@@ -159,6 +183,21 @@ export function createControls({ canvas, camera, map, world, getState, me, onInt
     if (roomAt(map, me.floor, v3.x, v3.z) === null) return;
     const p = nearestFree(grid(me.floor), v3.x, v3.z);
     if (p) goTo({ floor: me.floor, x: p.x, z: p.z }, 0, null);
+  }
+  function fireTarget(t) {
+    if (t.kind === 'item') onInteract?.({ kind: 'item', id: t.id, marker: t.marker });
+    else if (t.kind === 'stairs') onStairs?.(t.id);
+    else onPassage?.();
+  }
+  function interactNearest() {
+    const list = markerCandidates().map(c => {
+      c.obj.getWorldPosition(v3);
+      return { x: v3.x, z: v3.z, target: c.target };
+    });
+    const hit = nearestTarget(map, me, list, ARRIVE);
+    if (!hit) { onBlocked?.('nothing-near'); return; }
+    route = null; waiting = null;
+    fireTarget(hit.target);
   }
   function goTo(goal, reach, onArrive) {
     waiting = null;
@@ -180,7 +219,8 @@ export function createControls({ canvas, camera, map, world, getState, me, onInt
       const p = nearestFree(g, me.x, me.z, 1.5);
       if (p) { me.x = p.x; me.z = p.z; }
     }
-    const v = stick ? joystickVector(stick.x - stick.x0, stick.y - stick.y0) : null;
+    let v = stick ? joystickVector(stick.x - stick.x0, stick.y - stick.y0) : null;
+    if ((!v || v.mag === 0) && held.size) v = keysVector(held);
     if (v && v.mag > 0) {
       route = null; waiting = null; // the stick overrides any tap route
       const p = moveWithSlide(g, me.x, me.z, v.x * SPEED * dt, v.z * SPEED * dt);
@@ -334,6 +374,10 @@ export function createControls({ canvas, camera, map, world, getState, me, onInt
       canvas.removeEventListener('pointermove', onMove);
       canvas.removeEventListener('pointerup', onUp);
       canvas.removeEventListener('pointercancel', onUp);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', releaseKeys);
+      document.removeEventListener('visibilitychange', onVisibility);
       canvas.style.touchAction = prevTouch;
       base.remove();
       for (const [group, list] of fades) {
@@ -341,7 +385,7 @@ export function createControls({ canvas, camera, map, world, getState, me, onInt
         for (const e of list) { group.remove(e.fade); e.fade.material.dispose(); e.fade.dispose(); }
       }
       fades.clear();
-      route = null; waiting = null; stick = null; taps.clear();
+      route = null; waiting = null; stick = null; taps.clear(); held.clear();
     },
   };
 }
