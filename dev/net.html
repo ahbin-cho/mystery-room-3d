@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Net (dev)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{margin:0;padding:12px;background:#0e1424;color:#eef;font:13px/1.45 monospace}
+button,input{font:13px monospace;padding:5px 8px;margin:2px}
+#log{white-space:pre-wrap;margin-top:8px;max-height:70vh;overflow:auto;border-top:1px solid #345;padding-top:6px}
+</style>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+<div>
+  <input id="name" value="탐정" size="8">
+  <button id="create">방 만들기</button>
+  <input id="code" placeholder="CODE" size="5"><button id="join">참가</button>
+  <button id="next">next</button><button id="close">close</button>
+</div>
+<div id="status">-</div>
+<div id="log"></div>
+<script type="module">
+// Throwaway smoke page for src/net.js: create a room in one tab, join from another (?join=CODE).
+// Window hooks for scripted checks: net, seen, peers.
+import { CASE } from '../src/cases/owl-manor.js';
+import { createRoom, joinRoom } from '../src/net.js';
+
+// Test hooks: remember Peer instances (to cut a data channel by hand), and ?fast=ms shortens timed phases.
+const RealPeer = window.Peer;
+window.peers = [];
+window.Peer = class extends RealPeer { constructor(...a) { super(...a); window.peers.push(this); } };
+const fast = Number(new URLSearchParams(location.search).get('fast')) || 0;
+const caseData = fast ? { ...CASE, PHASES: CASE.PHASES.map(p => (p.ms ? { ...p, ms: fast } : p)) } : CASE;
+
+const $ = s => document.querySelector(s);
+const log = (...a) => { $('#log').textContent = a.join(' ') + '\n' + $('#log').textContent.slice(0, 6000); };
+const seen = window.seen = { states: 0, events: [], poses: 0, lastS: null, lastPoses: null, disconnected: null };
+const handlers = {
+  onState(S, rem) { seen.states++; seen.lastS = S; log('state', S.phase, 'rem', rem, 'players', Object.keys(S.players).map(p => `${S.players[p].name}${S.players[p].online ? '' : '(off)'}`).join(',')); },
+  onEvent(ev) { seen.events.push(ev); log('event', JSON.stringify(ev)); },
+  onPoses(m) { seen.poses++; seen.lastPoses = m; },
+  onDisconnected(r) { seen.disconnected = r; log('DISCONNECTED', r); },
+  onReconnecting(n) { log('reconnecting', n); },
+};
+async function go(p) {
+  try { window.net = await p; $('#status').textContent = `${net.isHost ? 'HOST' : 'CLIENT'} code=${net.code} pid=${net.pid}`; }
+  catch (e) { $('#status').textContent = 'ERR ' + e.type + ' ' + e.message; window.netErr = e; }
+}
+$('#create').onclick = () => go(createRoom($('#name').value, caseData, handlers));
+$('#join').onclick = () => go(joinRoom($('#name').value, $('#code').value, caseData, handlers));
+$('#next').onclick = () => window.net?.send({ t: 'next' });
+$('#close').onclick = () => window.net?.close();
+const q = new URLSearchParams(location.search);
+if (q.get('join')) { $('#code').value = q.get('join'); $('#name').value = q.get('name') ?? '손님'; $('#join').click(); }
+setInterval(() => { if (window.net) $('#status').textContent = `${net.isHost ? 'HOST' : 'CLIENT'} code=${net.code} pid=${net.pid} states=${seen.states} poses=${seen.poses} events=${seen.events.length}`; }, 500);
+</script>
+</body>
+</html>
