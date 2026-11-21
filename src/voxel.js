@@ -1,8 +1,10 @@
-// Block builder: collects blocks, then emits one InstancedMesh per (texture key, size).
+// Block builder: collects blocks, then emits one InstancedMesh per texture key (sizes share a scaled unit cube).
 import * as THREE from 'three';
 import { makeTexture } from './textures.js';
 
 const TRANSLUCENT = { glass: 0.45, water: 0.4 };
+// Keys that glow by themselves (fake light: flames, lamp shades, snowy night windows).
+const EMISSIVE = { fire: 1.0, lampshade: 0.85, window_night: 0.7 };
 const boxGeoCache = new Map();
 const matCache = new Map();
 
@@ -24,6 +26,11 @@ function material(key) {
       opts.opacity = TRANSLUCENT[key];
       opts.depthWrite = false;
     }
+    if (key in EMISSIVE) {
+      opts.emissive = new THREE.Color(0xffffff);
+      opts.emissiveMap = opts.map;
+      opts.emissiveIntensity = EMISSIVE[key];
+    }
     m = new THREE.MeshLambertMaterial(opts);
     matCache.set(key, m);
   }
@@ -32,18 +39,17 @@ function material(key) {
 
 export class VoxelBuilder {
   constructor() {
-    this.groups = new Map(); // "key|size" -> { key, size, pos: number[] }
+    this.groups = new Map(); // key -> { key, pos: number[] (x, y, z, size per block) }
   }
 
   // (x,y,z) is the block's minimum corner, in metres.
   add(key, x, y, z, size = 0.5) {
-    const id = `${key}|${size}`;
-    let g = this.groups.get(id);
+    let g = this.groups.get(key);
     if (!g) {
-      g = { key, size, pos: [] };
-      this.groups.set(id, g);
+      g = { key, pos: [] };
+      this.groups.set(key, g);
     }
-    g.pos.push(x, y, z);
+    g.pos.push(x, y, z, size);
     return this;
   }
 
@@ -58,19 +64,22 @@ export class VoxelBuilder {
     return this;
   }
 
+  // One InstancedMesh per texture key: every block size shares a unit cube scaled per instance,
+  // so big walls and 1/4-size props of the same material cost a single draw call.
   build() {
     const group = new THREE.Group();
     const m4 = new THREE.Matrix4();
-    for (const { key, size, pos } of this.groups.values()) {
-      const n = pos.length / 3;
-      const mesh = new THREE.InstancedMesh(boxGeo(size), material(key), n);
-      const h = size / 2;
+    for (const { key, pos } of this.groups.values()) {
+      const n = pos.length / 4;
+      const mesh = new THREE.InstancedMesh(boxGeo(1), material(key), n);
       for (let i = 0; i < n; i++) {
-        m4.makeTranslation(pos[i * 3] + h, pos[i * 3 + 1] + h, pos[i * 3 + 2] + h);
+        const s = pos[i * 4 + 3], h = s / 2;
+        m4.makeScale(s, s, s).setPosition(pos[i * 4] + h, pos[i * 4 + 1] + h, pos[i * 4 + 2] + h);
         mesh.setMatrixAt(i, m4);
       }
       mesh.instanceMatrix.needsUpdate = true;
-      mesh.name = `${key}@${size}`;
+      mesh.computeBoundingSphere();
+      mesh.name = key;
       if (key in TRANSLUCENT) mesh.renderOrder = 1;
       group.add(mesh);
     }
