@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Characters (dev)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+html,body{margin:0;height:100%;background:#1b1624;overflow:hidden;touch-action:none}
+canvas{display:block}
+#hud{position:fixed;left:8px;top:8px;color:#eef;font:12px/1.4 monospace;white-space:pre;pointer-events:none;text-shadow:0 1px 2px #000}
+#bar{position:fixed;left:8px;bottom:8px;right:8px;display:flex;flex-wrap:wrap;gap:4px}
+#bar button{font:13px sans-serif;padding:6px 9px;border-radius:6px;border:0;background:#f4e6c8;color:#3a2a1e}
+#bar button.on{background:#7a4a1a;color:#fff}
+</style>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+</head>
+<body>
+<div id="hud"></div>
+<div id="bar">
+  <button data-s="idle" class="on">idle</button><button data-s="walk">walk</button><button data-s="crouch">crouch</button>
+  <button id="spin">회전</button><button id="top">위에서</button><button id="front">정면</button>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CASE } from '../src/cases/owl-manor.js';
+import { makeSceneLights } from '../src/world.js';
+import { makeCharacter, animateCharacter, LOBBY_LOOKS } from '../src/characters.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1b1624);
+scene.add(makeSceneLights());
+scene.add(new THREE.AmbientLight(0xfff0dc, 0.9)); // stands in for the warm room lights
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(14, 6).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x5a4030 }));
+scene.add(floor);
+
+const chars = [];
+const roles = Object.entries(CASE.ROLES);
+roles.forEach(([key, r], i) => {
+  const ch = makeCharacter(r.look, r.name);
+  ch.group.position.set((i - (roles.length - 1) / 2) * 1.6, 0, 1.4);
+  scene.add(ch.group); chars.push(ch);
+});
+LOBBY_LOOKS.forEach((look, i) => {
+  const ch = makeCharacter(look, `손님 ${i + 1}`);
+  ch.group.position.set((i - (LOBBY_LOOKS.length - 1) / 2) * 1.4, 0, -1.4);
+  scene.add(ch.group); chars.push(ch);
+});
+
+const cam = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+const controls = new OrbitControls(cam, renderer.domElement);
+// distance that fits the ~8 m wide line-up in the current aspect ratio
+const fit = () => Math.max(9.5, 4.6 / (Math.tan(THREE.MathUtils.degToRad(22.5)) * cam.aspect));
+const views = {
+  front: () => { const d = fit(); cam.position.set(0, d * 0.28, d); controls.target.set(0, 0.9, 0); },
+  top: () => { const d = fit(); cam.position.set(0, d * 1.05, d * 0.6); controls.target.set(0, 0, 0); },
+};
+views.front();
+controls.update();
+
+let state = 'idle', spin = false;
+document.querySelectorAll('[data-s]').forEach((b) => b.onclick = () => {
+  state = b.dataset.s;
+  document.querySelectorAll('[data-s]').forEach((o) => o.classList.toggle('on', o === b));
+});
+document.getElementById('spin').onclick = (e) => { spin = !spin; e.target.classList.toggle('on', spin); };
+document.getElementById('top').onclick = () => { views.top(); controls.update(); };
+document.getElementById('front').onclick = () => { views.front(); controls.update(); };
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix();
+});
+
+let meshes = 0;
+chars[0].group.traverse((o) => { if (o.isMesh || o.isSprite) meshes++; });
+const hud = document.getElementById('hud');
+const clock = new THREE.Clock();
+let frames = 0, acc = 0, fps = 0;
+window.__chars = chars; window.__cam = cam; window.__controls = controls;
+window.__setState = (s) => { state = s; };
+(function loop() {
+  const dt = Math.min(clock.getDelta(), 0.1), t = clock.elapsedTime;
+  for (const ch of chars) {
+    animateCharacter(ch, state, t, dt);
+    if (spin) ch.group.rotation.y += dt * 0.8;
+  }
+  controls.update();
+  renderer.render(scene, cam);
+  frames++; acc += dt;
+  if (acc > 0.5) { fps = Math.round(frames / acc); frames = 0; acc = 0; }
+  hud.textContent = `${chars.length} characters · state ${state} · ${fps} fps\n` +
+    `draw calls ${renderer.info.render.calls} · objects/char(유진) ${meshes}\n` +
+    `geometries ${renderer.info.memory.geometries} · textures ${renderer.info.memory.textures}`;
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
