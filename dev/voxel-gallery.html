@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Voxel gallery (dev)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>html,body{margin:0;height:100%;background:#1b1624;overflow:hidden}canvas{display:block}
+#l{position:fixed;left:8px;top:8px;color:#eee;font:12px monospace;white-space:pre;pointer-events:none}</style>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+</head>
+<body>
+<div id="l"></div>
+<script type="module">
+import * as THREE from 'three';
+import { TEXTURE_KEYS } from '../src/textures.js';
+import { VoxelBuilder } from '../src/voxel.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+window.__renderer = renderer;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1b1624);
+scene.add(new THREE.AmbientLight(0xffffff, 1.6));
+const sun = new THREE.DirectionalLight(0xfff0d0, 1.2);
+sun.position.set(3, 6, 4);
+scene.add(sun);
+
+// 4 columns x N rows of 2x2x2 blocks per key, one cell per key.
+const b = new VoxelBuilder();
+const cols = 5, gap = 1.8;
+TEXTURE_KEYS.forEach((k, i) => {
+  const cx = (i % cols) * gap, cz = -Math.floor(i / cols) * gap;
+  b.addBox(k, cx, 0, cz, cx + 1, 1, cz + 1, 0.5);       // 2x2x2 big blocks
+  if (i < 3) b.addBox(k, cx + 1.1, 0, cz, cx + 1.35, 0.25, cz + 0.25, 0.125); // a few mini blocks
+});
+scene.add(b.build());
+
+const rows = Math.ceil(TEXTURE_KEYS.length / cols);
+const cam = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 100);
+const mx = (cols - 1) * gap / 2, mz = -(rows - 1) * gap / 2;
+cam.position.set(mx, 11, mz + 11);
+cam.lookAt(mx, 0, mz);
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix();
+});
+renderer.render(scene, cam);
+document.getElementById('l').textContent =
+  TEXTURE_KEYS.length + ' textures, draw calls: ' + renderer.info.render.calls;
+window.__keys = TEXTURE_KEYS;
+(function loop() { renderer.render(scene, cam); requestAnimationFrame(loop); })();
+</script>
+</body>
+</html>
