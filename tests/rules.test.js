@@ -19,6 +19,14 @@ function toPhase(S, phase, now = 0) {
   return S;
 }
 const roleOf = (S, role) => Object.keys(S.players).find(p => S.players[p].role === role);
+// Test-only: put a player somewhere (floor included) without going through the reducer.
+function place(S, pid, x, z, floor = S.players[pid].floor) {
+  const T = structuredClone(S);
+  Object.assign(T.players[pid], { x, z, floor });
+  return T;
+}
+const EARRING = [1.5, 2.8]; // conservatory, floor 0
+const nearEarring = (S, pid) => place(S, pid, EARRING[0] + 1, EARRING[1]);
 
 test('culprit always assigned to a player when 2+', () => {
   for (let s = 0; s < 50; s++) {
@@ -80,7 +88,7 @@ test('stairs blocked before investigate2', () => {
 });
 
 test('stairs work in investigate2 and back', () => {
-  const S1 = toPhase(lobby(), 'investigate2');
+  const S1 = place(toPhase(lobby(), 'investigate2'), 'a', 15.5, 18);
   const up = act(S1, { t: 'useStairs', id: 'main' }, 'a');
   assert.equal(up.S.players.a.floor, 1);
   assert.equal(up.events[0].type, 'teleport');
@@ -97,7 +105,7 @@ test('fixed items cannot be picked', () => {
 });
 
 test('portable item: first picker holds, others see gone', () => {
-  const S1 = toPhase(lobby(), 'investigate1');
+  const S1 = nearEarring(nearEarring(toPhase(lobby(), 'investigate1'), 'a'), 'b');
   const r = act(S1, { t: 'pick', id: 'earring' }, 'a');
   assert.equal(visibleItem(r.S, 'b', 'earring'), 'gone');
   assert.equal(visibleItem(r.S, 'a', 'earring'), 'mine');
@@ -108,7 +116,7 @@ test('portable item: first picker holds, others see gone', () => {
 });
 
 test('shared item visible to all', () => {
-  let S = toPhase(lobby(), 'investigate1');
+  let S = nearEarring(toPhase(lobby(), 'investigate1'), 'a');
   S = act(S, { t: 'pick', id: 'earring' }, 'a').S;
   assert.equal(act(S, { t: 'share', id: 'earring' }, 'b').S.items.earring.shared, false);
   S = act(S, { t: 'share', id: 'earring' }, 'a').S;
@@ -117,7 +125,7 @@ test('shared item visible to all', () => {
 });
 
 test('cannot pick in lobby or vote', () => {
-  const L = lobby();
+  const L = nearEarring(lobby(), 'a');
   assert.equal(act(L, { t: 'pick', id: 'earring' }, 'a').S.items.earring?.holder ?? null, null);
   const V = toPhase(L, 'vote');
   assert.equal(act(V, { t: 'pick', id: 'earring' }, 'a').S.items.earring?.holder ?? null, null);
@@ -135,7 +143,7 @@ test('passage: sera and doyun can use from start, others after discover or share
   assert.ok(rej.private[other].length > 0);
   const d = act(S, { t: 'discoverPassage' }, other).S;
   assert.ok(canUsePassage(d, CASE, other));
-  const use = act(d, { t: 'usePassage' }, other);
+  const use = act(place(d, other, 22, 12), { t: 'usePassage' }, other);
   assert.equal(use.events[0].type, 'teleport');
   // sharing
   assert.equal(act(S, { t: 'sharePassage' }, other).S.passageShared, false);
@@ -146,7 +154,7 @@ test('passage: sera and doyun can use from start, others after discover or share
 });
 
 test('rejoin keeps role and items', () => {
-  let S = toPhase(lobby(), 'investigate1');
+  let S = nearEarring(toPhase(lobby(), 'investigate1'), 'a');
   const role = S.players.a.role;
   S = act(S, { t: 'pick', id: 'earring' }, 'a').S;
   S = act(S, { t: 'leave' }, 'a').S;
@@ -225,4 +233,98 @@ test('does not mutate input; unknown action is a no-op', () => {
   const r = act(S, { t: 'bogus' }, 'a');
   assert.deepEqual(r.events, []);
   assert.deepEqual(r.S, S);
+});
+
+// --- host authority: the server checks floor, room and distance ---
+
+test('pos ignores client floor; only stairs/passage change it', () => {
+  const S = act(lobby(), { t: 'pos', floor: 1, x: 3, z: 4, ry: 1, mv: 1 }, 'a').S;
+  assert.equal(S.players.a.floor, 0);
+  assert.equal(S.players.a.x, 3);
+});
+
+test('pos ignores non-finite x/z and clamps mv', () => {
+  const S0 = lobby();
+  const { x, z } = S0.players.a;
+  for (const bad of [NaN, Infinity, -Infinity, '5', null, undefined]) {
+    const S = act(S0, { t: 'pos', x: bad, z: 4, ry: 0, mv: 0 }, 'a').S;
+    assert.equal(S.players.a.x, x);
+    assert.equal(S.players.a.z, z);
+    const S2 = act(S0, { t: 'pos', x: 4, z: bad, ry: 0, mv: 0 }, 'a').S;
+    assert.equal(S2.players.a.x, x);
+  }
+  assert.equal(act(S0, { t: 'pos', x: 1, z: 1, ry: 0, mv: 7 }, 'a').S.players.a.mv, 1);
+  assert.equal(act(S0, { t: 'pos', x: 1, z: 1, ry: 0, mv: -3 }, 'a').S.players.a.mv, 0);
+  assert.equal(act(S0, { t: 'pos', x: 1, z: 1, ry: 0, mv: NaN }, 'a').S.players.a.mv, 0);
+  assert.equal(act(S0, { t: 'pos', x: 1, z: 1, ry: 'x', mv: 0 }, 'a').S.players.a.ry, S0.players.a.ry);
+});
+
+test('pick: too far is rejected with a private toast', () => {
+  const S1 = toPhase(lobby(), 'investigate1'); // everyone stands in the hall
+  const r = act(S1, { t: 'pick', id: 'earring' }, 'a');
+  assert.equal(r.S.items.earring?.holder ?? null, null);
+  assert.deepEqual(r.events, []);
+  assert.match(r.private.a[0].text, /너무 멀어요/);
+});
+
+test('pick: 2.0 m radius on the item floor', () => {
+  const S1 = toPhase(lobby(), 'investigate1');
+  const ok = act(place(S1, 'a', EARRING[0] + 1.99, EARRING[1]), { t: 'pick', id: 'earring' }, 'a');
+  assert.equal(ok.S.items.earring.holder, 'a');
+  const far = act(place(S1, 'a', EARRING[0] + 2.01, EARRING[1]), { t: 'pick', id: 'earring' }, 'a');
+  assert.equal(far.S.items.earring?.holder ?? null, null);
+});
+
+test('pick: must be in the item room, not just near it', () => {
+  // ledger is in the butler room at (18, 6); (18, 4.6) is 1.4 m away but in the cellar
+  const S1 = toPhase(lobby(), 'investigate1');
+  const r = act(place(S1, 'a', 18, 4.6), { t: 'pick', id: 'ledger' }, 'a');
+  assert.equal(r.S.items.ledger?.holder ?? null, null);
+  assert.ok(r.private.a.length > 0);
+  assert.equal(act(place(S1, 'a', 18, 5.4), { t: 'pick', id: 'ledger' }, 'a').S.items.ledger.holder, 'a');
+});
+
+test('pick: must be on the item floor', () => {
+  // will is in the master bedroom (floor 1) at (21.5, 11); the study below has the same x/z
+  const S1 = toPhase(lobby(), 'investigate2');
+  const below = act(place(S1, 'a', 21.5, 11, 0), { t: 'pick', id: 'will' }, 'a');
+  assert.equal(below.S.items.will?.holder ?? null, null);
+  assert.ok(below.private.a.length > 0);
+  assert.equal(act(place(S1, 'a', 21.5, 11, 1), { t: 'pick', id: 'will' }, 'a').S.items.will.holder, 'a');
+});
+
+test('stairs: must stand within 2.0 m of the end on your floor', () => {
+  const S1 = toPhase(lobby(), 'investigate2'); // hall spots are ~4 m from the stairs
+  const far = act(S1, { t: 'useStairs', id: 'main' }, 'a');
+  assert.equal(far.S.players.a.floor, 0);
+  assert.deepEqual(far.events, []);
+  assert.match(far.private.a[0].text, /너무 멀어요/);
+  // 1 m from the upstairs end (14, 18.5) but on floor 0, 2.5 m from the hall end: does not count
+  const wrongEnd = act(place(S1, 'a', 13, 18.5, 0), { t: 'useStairs', id: 'main' }, 'a');
+  assert.ok(wrongEnd.S.players.a.floor === 0 && wrongEnd.private);
+  const near = act(place(S1, 'a', 15.5, 16.6, 0), { t: 'useStairs', id: 'main' }, 'a');
+  assert.equal(near.S.players.a.floor, 1);
+});
+
+test('passage: must stand within 2.0 m of an end, goes to the other end', () => {
+  let S = toPhase(lobby(), 'investigate1');
+  S = act(S, { t: 'sharePassage' }, roleOf(S, 'sera')).S;
+  const far = act(S, { t: 'usePassage' }, 'a');
+  assert.equal(far.events.length, 0);
+  assert.match(far.private.a[0].text, /너무 멀어요/);
+  const { a: study, b: cons } = CASE.MAP.passages[0];
+  const fromStudy = act(place(S, 'a', study.x - 1, study.z), { t: 'usePassage' }, 'a');
+  assert.deepEqual([fromStudy.S.players.a.x, fromStudy.S.players.a.z], [cons.x, cons.z]);
+  const back = act(fromStudy.S, { t: 'usePassage' }, 'a');
+  assert.deepEqual([back.S.players.a.x, back.S.players.a.z], [study.x, study.z]);
+  // right x/z but on the wrong floor (master bedroom above the study)
+  const upstairs = act(place(S, 'a', study.x, study.z, 1), { t: 'usePassage' }, 'a');
+  assert.equal(upstairs.events.length, 0);
+});
+
+test('vote target must be an own role key', () => {
+  const S = toPhase(lobby(), 'vote');
+  for (const bad of ['__proto__', 'constructor', 'toString', 'nobody', 3]) {
+    assert.equal(act(S, { t: 'vote', target: bad }, 'a').S.votes.a, undefined);
+  }
 });

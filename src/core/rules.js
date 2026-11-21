@@ -1,4 +1,5 @@
 // Pure game-rules reducer: no DOM, no three.js. The host runs applyAction for every action.
+import { roomAt } from './map.js';
 
 const HOST = 'host';
 const ITEM_PHASES = ['investigate1', 'midtalk', 'investigate2', 'finaltalk'];
@@ -7,6 +8,10 @@ const phaseIndex = (caseData, id) => caseData.PHASES.findIndex(p => p.id === id)
 const roomName = (caseData, roomId) => caseData.MAP.rooms.find(r => r.id === roomId)?.name ?? roomId;
 const caseRoles = caseData => Object.keys(caseData.ROLES).filter(r => r !== 'helper');
 const toast = text => ({ type: 'toast', text });
+// Server-side reach: the client arrives within 1.6 m (walk.js ARRIVE); 2.0 m leaves room for lag.
+export const REACH = 2.0;
+const TOO_FAR = '너무 멀어요';
+const near = (p, x, z) => (p.x - x) ** 2 + (p.z - z) ** 2 <= REACH * REACH;
 
 export function createState(caseData) {
   const first = caseData.PHASES[0];
@@ -139,8 +144,11 @@ export function applyAction(S0, caseData, action, fromPid, now, rng = Math.rando
       break;
     }
     case 'pos': {
-      if (!p) break;
-      p.floor = action.floor; p.x = action.x; p.z = action.z; p.ry = action.ry; p.mv = action.mv;
+      // floor is server-owned (changed only by the stairs/passage teleport); a client's floor is ignored
+      if (!p || !Number.isFinite(action.x) || !Number.isFinite(action.z)) break;
+      p.x = action.x; p.z = action.z;
+      if (Number.isFinite(action.ry)) p.ry = action.ry;
+      p.mv = Number.isFinite(action.mv) ? Math.min(1, Math.max(0, action.mv)) : 0;
       break;
     }
     case 'next': {
@@ -155,6 +163,9 @@ export function applyAction(S0, caseData, action, fromPid, now, rng = Math.rando
       const item = caseData.ITEMS.find(i => i.id === action.id);
       if (!item || item.kind !== 'portable') break;
       if (S.items[item.id]?.holder) break;
+      const [ix, , iz] = item.pos;
+      if (p.floor !== floorOfRoom(caseData, item.room) || roomAt(caseData.MAP, p.floor, p.x, p.z) !== item.room
+          || !near(p, ix, iz)) { reject(TOO_FAR); break; }
       S.items[item.id] = { holder: fromPid, shared: false };
       events.push(toast(`👜 누군가 ${roomName(caseData, item.room)}에서 증거를 챙겼다…`));
       break;
@@ -179,7 +190,7 @@ export function applyAction(S0, caseData, action, fromPid, now, rng = Math.rando
     }
     case 'vote': {
       if (!p || S.phase !== 'vote') break;
-      if (!caseData.ROLES[action.target]) break;
+      if (typeof action.target !== 'string' || !Object.hasOwn(caseData.ROLES, action.target)) break;
       S.votes[fromPid] = action.target;
       break;
     }
@@ -187,8 +198,10 @@ export function applyAction(S0, caseData, action, fromPid, now, rng = Math.rando
       if (!p) break;
       const st = caseData.MAP.stairs.find(s => s.id === action.id);
       if (!st) break;
-      const dest = floorOfRoom(caseData, st.a.room) === p.floor ? st.b : st.a;
+      const fromA = floorOfRoom(caseData, st.a.room) === p.floor;
+      const [here, dest] = fromA ? [st.a, st.b] : [st.b, st.a];
       if (!S.floorsOpen.includes(floorOfRoom(caseData, dest.room))) { reject('2층은 조사 2부터 열려요'); break; }
+      if (floorOfRoom(caseData, here.room) !== p.floor || !near(p, here.x, here.z)) { reject(TOO_FAR); break; }
       teleportTo(S, fromPid, dest, caseData, events);
       break;
     }
@@ -196,8 +209,9 @@ export function applyAction(S0, caseData, action, fromPid, now, rng = Math.rando
       if (!p) break;
       if (!canUsePassage(S, caseData, fromPid)) { reject('아직 이용할 수 있는 통로가 없어요'); break; }
       const ps = caseData.MAP.passages[0];
-      const d = e => (p.x - e.x) ** 2 + (p.z - e.z) ** 2;
-      const dest = d(ps.a) <= d(ps.b) ? ps.b : ps.a; // go to the end farther from the player
+      const at = e => floorOfRoom(caseData, e.room) === p.floor && near(p, e.x, e.z);
+      const dest = at(ps.a) ? ps.b : at(ps.b) ? ps.a : null; // stand at one end, come out at the other
+      if (!dest) { reject(TOO_FAR); break; }
       teleportTo(S, fromPid, dest, caseData, events);
       break;
     }
