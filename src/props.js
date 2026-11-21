@@ -1065,11 +1065,13 @@ def('front_door', [2, 0.25], false, (t) => {
 
 def('staircase', [2, 3], true, (t) => {
   // 12 steps of 0.25, foot at the front (lz = 3), top (3 m) at the back.
+  // Only what the camera can see: the top two layers of each step (tread + riser) and the open
+  // west side as a stepped stringer; the hidden mass under the stairs is left out.
   for (let k = 0; k < 12; k++) {
-    const z1 = 3 - k * 0.25, z0 = z1 - 0.25, h = (k + 1) * 0.25;
-    t.box('wood_dark', 0, 0, z0, 0.5, h, z1, 0.25);
-    t.box('wood_dark', 1.5, 0, z0, 2, h, z1, 0.25);
-    if (h > 0.25) t.box('wood_dark', 0.5, 0, z0, 1.5, h - 0.25, z1, 0.25);
+    const z1 = 3 - k * 0.25, z0 = z1 - 0.25, h = (k + 1) * 0.25, lo = Math.max(0, h - 0.5);
+    t.box('wood_dark', 0, 0, z0, 0.25, h, z1, 0.25); // stringer
+    t.box('wood_dark', 0.25, lo, z0, 0.5, h, z1, 0.25).box('wood_dark', 1.5, lo, z0, 2, h, z1, 0.25);
+    if (h > 0.25) t.box('wood_dark', 0.5, lo, z0, 1.5, h - 0.25, z1, 0.25);
     t.box('carpet_wine', 0.5, h - 0.25, z0, 1.5, h, z1, 0.25);
     if (k % 2 === 0) t.box('wood_light', -0.125, h, z0 + 0.0625, 0, h + 0.875, z0 + 0.1875);
     t.box('wood_light', -0.125, h + 0.875, z0, 0, h + 1.0, z1);

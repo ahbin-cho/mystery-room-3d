@@ -1,6 +1,13 @@
 // 저택 생성 (스펙 4.2 · 4.4): 층마다 바닥·벽·문틀·창문·소품·바깥 눈밭을 블록으로 쌓는다.
 // 정적인 것은 전부 VoxelBuilder(InstancedMesh)로 묶어 층당 드로우콜을 낮게 유지한다.
 // 벽은 층마다 별도 그룹(wallGroups[floor])이라 나중에 카메라-플레이어 사이 벽을 흐리게 처리할 수 있다.
+//
+// 조명 API (Task 10/11):
+//   scene.add(makeSceneLights());      // 달빛 + 반구광, 한 번
+//   scene.add(world.lightPool);        // 방 조명 풀(PointLight 4개 고정), 한 번
+//   updateLights(world, floor, roomId) // 플레이어가 있는 방이 바뀔 때마다: 그 방 + 문으로 이어진 가까운 방 3곳을 밝힌다
+//   setVisibleFloor(world, floor)      // 층 전환 (조명 개수는 그대로라 셰이더 재컴파일 없음)
+// world.roomLights[roomId] 는 PointLight 가 아니라 그 방 조명의 설정값 {color, intensity, distance, decay, position} 이다.
 import * as THREE from 'three';
 import { VoxelBuilder } from './voxel.js';
 import { PROPS, frame, entryFootprint } from './props.js';
@@ -10,6 +17,7 @@ const C = 0.5; // grid cell / big block
 const WALL_H = 3;
 const LIGHT_K = 16; // PointLight candela per unit of room light intensity (tuned in dev/world-viewer.html)
 const EPS = 1e-6;
+const LIGHT_POOL = 4; // point lights alive at once: the player's room + its nearest door neighbours
 
 const ci = v => Math.round(v / C); // metres -> cell index (cell min corner)
 const ck = (i, j) => `${i},${j}`;
@@ -49,7 +57,25 @@ export function buildWorld(caseData) {
   const world = {
     floors: [], wallGroups: [], itemMarkers: {}, itemVisuals: {},
     stairMarkers: {}, passageMarkers: {}, roomLights: {}, passageDoors: {},
+    lightPool: new THREE.Group(), lightNeighbours: {},
   };
+  // A fixed pool of point lights shared by both floors. The count never changes, so switching floors
+  // never recompiles shaders, and each fragment evaluates LIGHT_POOL lights instead of one per room.
+  world.lightPool.name = 'room-light-pool';
+  for (let i = 0; i < LIGHT_POOL; i++) {
+    const L = new THREE.PointLight(0xffffff, 0, 10, 1.2);
+    L.name = `pool-light-${i}`;
+    world.lightPool.add(L);
+  }
+  // Neighbours = rooms joined by a door, nearest first.
+  const centre = r => [(r.rect[0] + r.rect[2]) / 2, (r.rect[1] + r.rect[3]) / 2];
+  for (const r of MAP.rooms) {
+    const [cx, cz] = centre(r);
+    world.lightNeighbours[r.id] = (MAP.doors || [])
+      .filter(d => d.a === r.id || d.b === r.id).map(d => (d.a === r.id ? d.b : d.a))
+      .filter(id => roomById.get(id) && roomById.get(id).floor === r.floor)
+      .sort((p, q) => { const [px, pz] = centre(roomById.get(p)), [qx, qz] = centre(roomById.get(q)); return Math.hypot(px - cx, pz - cz) - Math.hypot(qx - cx, qz - cz); });
+  }
 
   for (const fl of MAP.floors) {
     const f = fl.id, base = bases[f];
@@ -66,11 +92,12 @@ export function buildWorld(caseData) {
         for (let i = ci(r.rect[0]); i < ci(r.rect[2]); i++) cellRoom.set(ck(i, j), r);
 
     // Decor footprints, for keeping windows / door leaves clear of furniture.
-    const blockers = [], holes = [];
+    const blockers = [], holes = [], rugs = [];
     for (const r of rooms) for (const e of decorRooms[r.id] || []) {
       const p = PROPS[e[0]];
       const fp = entryFootprint(e);
       if (p.hole) holes.push(fp);
+      if (e[0] === 'rug' && !(e[4] && e[4].y)) rugs.push(fp); // a rug's sunk blocks hide the slab under it
       if (!p.flat) blockers.push({ fp, tall: !!p.tall, room: r.id });
     }
     const blocked = (rect, tallOnly) => blockers.some(bk => (!tallOnly || bk.tall) && overlap(rect, bk.fp));
@@ -101,17 +128,9 @@ export function buildWorld(caseData) {
       }
     }
 
-    // ── floors (slab under every room, minus stairwell holes) ──
-    for (const r of rooms)
-      for (let j = ci(r.rect[1]); j < ci(r.rect[3]); j++)
-        for (let i = ci(r.rect[0]); i < ci(r.rect[2]); i++) {
-          const x = i * C, z = j * C;
-          if (holes.some(h => x + EPS >= h[0] && x + C <= h[2] + EPS && z + EPS >= h[1] && z + C <= h[3] + EPS)) continue;
-          deco.add(r.floorTex, x, base - C, z);
-        }
-
     // ── walls ──
     const windowCells = new Set();
+    const underWall = new Set(); // cells whose slab block is hidden under a wall column
     const noWin = new Set(DECOR.noWindows || []);
     const wallWins = DECOR.wallWindows || [];
     const curtains = DECOR.curtains || {};
@@ -165,6 +184,7 @@ export function buildWorld(caseData) {
         }
       }
       for (const [key, kind] of plan) {
+        if (kind !== 'open') underWall.add(key);
         const [i, j] = key.split(',').map(Number);
         const x = i * C, z = j * C;
         // door opening: no lintel (it would hide the gap from the top-down camera), just a wooden threshold
@@ -190,7 +210,20 @@ export function buildWorld(caseData) {
       }
     }
 
-    // ── exterior skin: one stone layer round the outside (windows show through) ──
+    // ── floors (slab under every room, minus stairwell holes and the cells under walls) ──
+    for (const r of rooms)
+      for (let j = ci(r.rect[1]); j < ci(r.rect[3]); j++)
+        for (let i = ci(r.rect[0]); i < ci(r.rect[2]); i++) {
+          const x = i * C, z = j * C;
+          if (underWall.has(ck(i, j))) continue;
+          if (rugs.some(h => x + EPS >= h[0] && x + C <= h[2] + EPS && z + EPS >= h[1] && z + C <= h[3] + EPS)) continue;
+          if (holes.some(h => x + EPS >= h[0] && x + C <= h[2] + EPS && z + EPS >= h[1] && z + C <= h[3] + EPS)) continue;
+          deco.add(r.floorTex, x, base - C, z);
+        }
+
+    // ── exterior skin: one stone layer round the outside (windows show through).
+    // The game camera looks north from inside the house, so only skin on the house's SOUTH side ever shows
+    // its outer face; elsewhere only the top is visible and we draw just the top block + snow.
     const skin = new Set();
     for (const key of cellRoom.keys()) {
       const [i, j] = key.split(',').map(Number);
@@ -206,7 +239,9 @@ export function buildWorld(caseData) {
       if (nbRooms.every(r => r.wallTex === 'glass')) continue;
       const x = i * C, z = j * C;
       const win = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([di, dj]) => windowCells.has(ck(i + di, j + dj)));
-      if (win) {
+      const southFace = cellRoom.has(ck(i, j - 1)) || cellRoom.has(ck(i - 1, j - 1)) || cellRoom.has(ck(i + 1, j - 1));
+      if (!southFace) walls.addBox('stone', x, base + WALL_H - C, z, x + C, base + WALL_H, z + C);
+      else if (win) {
         walls.addBox('stone', x, base - C, z, x + C, base + 1.0, z + C);
         walls.addBox('window_night', x, base + 1.0, z, x + C, base + 2.0, z + C);
         walls.addBox('stone', x, base + 2.0, z, x + C, base + WALL_H, z + C);
@@ -217,14 +252,18 @@ export function buildWorld(caseData) {
     // ── outside: snowy ground (and, upstairs, the snowy roofs of the ground floor) ──
     const inRects = (x, z, list) => list.some(r => x >= r.rect[0] - EPS && x + 1 <= r.rect[2] + EPS && z >= r.rect[1] - EPS && z + 1 <= r.rect[3] + EPS);
     const ground = MAP.rooms.filter(r => r.floor === 0);
-    for (let z = -8; z < 28; z++) for (let x = -8; x < 31; x++) {
+    // Snow only as far out as a camera inside the house can see (more to the north: the camera looks north).
+    const bb = MAP.rooms.reduce((a, r) => [Math.min(a[0], r.rect[0]), Math.min(a[1], r.rect[1]), Math.max(a[2], r.rect[2]), Math.max(a[3], r.rect[3])], [Infinity, Infinity, -Infinity, -Infinity]);
+    for (let z = Math.floor(bb[1]) - 6; z < Math.ceil(bb[3]) + 4; z++) for (let x = Math.floor(bb[0]) - 4; x < Math.ceil(bb[2]) + 4; x++) {
       if (!inRects(x, z, ground)) { deco.add('snow', x, -1.25, z, 1); continue; }
       if (f === 0) continue;
       // upstairs: the snowy roof of the ground floor wherever no upper room or wall stands
-      for (const [dx, dz] of [[0, 0], [C, 0], [0, C], [C, C]]) {
+      const quads = [[0, 0], [C, 0], [0, C], [C, C]].filter(([dx, dz]) => {
         const k = ck(ci(x + dx), ci(z + dz));
-        if (!skin.has(k) && !cellRoom.has(k)) deco.add('snow', x + dx, base - 0.75, z + dz, C);
-      }
+        return !skin.has(k) && !cellRoom.has(k);
+      });
+      if (quads.length === 4) deco.add('snow', x, base - 1.25, z, 1);
+      else for (const [dx, dz] of quads) deco.add('snow', x + dx, base - 0.75, z + dz, C);
     }
     for (const e of DECOR.outside || []) PROPS[e[0]](deco, e[1], -0.25, e[2], e[3] || 0, e[4] || {});
 
@@ -251,15 +290,14 @@ export function buildWorld(caseData) {
     group.add(decoGroup);
     world.wallGroups[f] = wallGroup;
 
-    // ── room lights: one warm point light per room (no shadows) ──
+    // ── room light settings (the actual PointLights live in world.lightPool, see updateLights) ──
     for (const r of rooms) {
       const [x0, z0, x1, z1] = r.rect;
       const span = Math.max(x1 - x0, z1 - z0);
-      const L = new THREE.PointLight(r.light.color, r.light.intensity * LIGHT_K, span * 1.6 + 2, 1.2);
-      L.position.set((x0 + x1) / 2, base + 2.4, (z0 + z1) / 2);
-      L.name = `light-${r.id}`;
-      group.add(L);
-      world.roomLights[r.id] = L;
+      world.roomLights[r.id] = {
+        room: r.id, floor: f, color: r.light.color, intensity: r.light.intensity * LIGHT_K,
+        distance: span * 1.6 + 2, decay: 1.2, position: new THREE.Vector3((x0 + x1) / 2, base + 2.4, (z0 + z1) / 2),
+      };
     }
 
     world.floors[f] = group;
@@ -310,6 +348,29 @@ export function buildWorld(caseData) {
 
 export function setVisibleFloor(world, floor) {
   world.floors.forEach((g, i) => { if (g) g.visible = i === floor; });
+}
+
+// Light the player's room and its nearest door neighbours with the fixed light pool.
+// Call whenever the player's room (or floor) changes; it is cheap (just moves/retunes 4 lights).
+// roomId may be null/unknown on that floor: the pool then lights nothing (scene lights still apply).
+// The caller must have added world.lightPool to the scene once: scene.add(world.lightPool).
+export function updateLights(world, floor, roomId) {
+  const want = [];
+  const cur = world.roomLights[roomId];
+  if (cur && cur.floor === floor) {
+    want.push(cur);
+    for (const id of world.lightNeighbours[roomId] || []) want.push(world.roomLights[id]);
+  }
+  world.lightPool.children.forEach((L, i) => {
+    const s = want[i];
+    if (!s) { L.intensity = 0; return; }
+    L.color.set(s.color);
+    L.intensity = s.intensity;
+    L.distance = s.distance;
+    L.decay = s.decay;
+    L.position.copy(s.position);
+  });
+  world.litRoom = cur ? roomId : null;
 }
 
 // Night sky light shared by every floor: cool moonlight + warm/cool hemisphere fill.

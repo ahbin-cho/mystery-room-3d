@@ -25,7 +25,8 @@ canvas{display:block}
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CASE } from '../src/cases/owl-manor.js';
-import { buildWorld, setVisibleFloor, makeSceneLights } from '../src/world.js';
+import { buildWorld, setVisibleFloor, makeSceneLights, updateLights } from '../src/world.js';
+import { roomAt } from '../src/core/map.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: false });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -41,6 +42,13 @@ const t0 = performance.now();
 const world = buildWorld(CASE);
 const buildMs = performance.now() - t0;
 world.floors.forEach(g => scene.add(g));
+scene.add(world.lightPool);
+// Light the room under the view target (in the game: the player's room).
+function relight() {
+  const id = roomAt(CASE.MAP, floor, controls.target.x, controls.target.z);
+  if (id !== world.litRoom || floorLit !== floor) { updateLights(world, floor, id); floorLit = floor; }
+}
+let floorLit = -1;
 
 const cam = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 200);
 const controls = new OrbitControls(cam, renderer.domElement);
@@ -53,6 +61,7 @@ function view(cx, cz, kind = 'game', dist = 9) {
   if (kind === 'top') cam.position.set(cx, y + dist * 2.4, cz + 0.01);
   else cam.position.set(cx, y + dist * 1.1, cz + dist * 0.6);
   controls.update();
+  relight();
 }
 function setFloor(f) {
   floor = f;
@@ -104,6 +113,7 @@ let frameNo = 0;
   if (times.length > 61) times.shift();
   if (times.length > 1) fps = (times.length - 1) * 1000 / (times[times.length - 1] - times[0]);
   controls.update();
+  relight();
   renderer.render(scene, cam);
   if (frameNo++ % 15 === 0) {
     hud.textContent = `floor ${floor + 1}  fps ${fps.toFixed(1)}  draw calls ${renderer.info.render.calls}\n`
