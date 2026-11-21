@@ -248,24 +248,33 @@ export function createControls({ canvas, camera, map, world, getState, me, onInt
       fade.renderOrder = 2;
       fade.name = `${mesh.name}-fade`;
       group.add(fade);
-      list.push({ mesh, fade, centres, orig, on: new Uint8Array(n) });
+      list.push({ mesh, fade, centres, orig, on: new Uint8Array(n), want: new Uint8Array(n) }); // buffers reused every frame
     }
     fades.set(group, list);
     return list;
   }
-  function applyFade(e, want) {
-    const { mesh, fade, orig, on } = e;
+  // Applies e.want: touches only instances whose state changed, then repacks the fade mesh
+  // (only when something changed). No allocation: plain index loops over preallocated buffers.
+  function applyFade(e) {
+    const { mesh, fade, orig, on, want } = e;
+    const dst = mesh.instanceMatrix.array;
+    const z = zero.elements;
     let changed = false;
-    for (let i = 0; i < on.length; i++) if (on[i] !== want[i]) { changed = true; break; }
+    for (let i = 0; i < on.length; i++) {
+      if (on[i] === want[i]) continue;
+      on[i] = want[i];
+      changed = true;
+      const o = i * 16;
+      if (on[i]) for (let k = 0; k < 16; k++) dst[o + k] = z[k];
+      else for (let k = 0; k < 16; k++) dst[o + k] = orig[o + k];
+    }
     if (!changed) return;
-    const dst = mesh.instanceMatrix.array, fdst = fade.instanceMatrix.array;
+    const fdst = fade.instanceMatrix.array;
     let c = 0;
     for (let i = 0; i < on.length; i++) {
-      on[i] = want[i];
-      if (want[i]) {
-        zero.toArray(dst, i * 16);
-        fdst.set(orig.subarray(i * 16, i * 16 + 16), c++ * 16);
-      } else dst.set(orig.subarray(i * 16, i * 16 + 16), i * 16);
+      if (!on[i]) continue;
+      const o = i * 16, f = c++ * 16;
+      for (let k = 0; k < 16; k++) fdst[f + k] = orig[o + k];
     }
     mesh.instanceMatrix.needsUpdate = true;
     fade.count = c;
@@ -273,7 +282,7 @@ export function createControls({ canvas, camera, map, world, getState, me, onInt
     fade.instanceMatrix.needsUpdate = true;
   }
   function clearFade(group) {
-    for (const e of fades.get(group) || []) applyFade(e, new Uint8Array(e.on.length));
+    for (const e of fades.get(group) || []) { e.want.fill(0); applyFade(e); }
   }
   const A = new THREE.Vector3(), lastA = new THREE.Vector3(Infinity, 0, 0), lastB = new THREE.Vector3(Infinity, 0, 0);
   let fadeFloor = null;
@@ -291,7 +300,8 @@ export function createControls({ canvas, camera, map, world, getState, me, onInt
     const minZ = Math.min(A.z, B.z) - FADE_R, maxZ = Math.max(A.z, B.z) + FADE_R;
     const r2 = FADE_R * FADE_R;
     for (const e of fadeData(group)) {
-      const c = e.centres, n = e.on.length, want = new Uint8Array(n);
+      const c = e.centres, n = e.on.length, want = e.want;
+      want.fill(0);
       for (let i = 0; i < n; i++) {
         const x = c[i * 3], z = c[i * 3 + 2];
         if (x < minX || x > maxX || z < minZ || z > maxZ) continue;
@@ -301,7 +311,7 @@ export function createControls({ canvas, camera, map, world, getState, me, onInt
         const qx = px - abx * t, qy = py - aby * t, qz = pz - abz * t;
         if (qx * qx + qy * qy + qz * qz < r2) want[i] = 1;
       }
-      applyFade(e, want);
+      applyFade(e);
     }
   }
 

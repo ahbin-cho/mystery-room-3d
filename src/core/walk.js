@@ -2,6 +2,7 @@
 // Pure logic, no DOM / three.js. A route is a findPath() Step[] walked waypoint by waypoint with
 // moveWithSlide, so furniture between waypoints is slid around.
 import { findPath } from './nav.js';
+import { roomAt } from './map.js';
 import { isBlocked, moveWithSlide } from './grid.js';
 import { canUsePassage } from './rules.js';
 
@@ -50,13 +51,15 @@ export function nearestFree(g, x, z, maxR = 1.0, r = BODY) {
 export function planRoute(map, from, goal, navOpts, reach = 0) {
   const steps = findPath(map, from, goal, navOpts);
   if (!steps) return null;
-  return { goal: { floor: goal.floor, x: goal.x, z: goal.z }, reach, steps, i: 0, best: Infinity, stuck: 0 };
+  // reach > 0 only counts inside the goal's room, so an item is never reached through a wall
+  return { map, goal: { floor: goal.floor, x: goal.x, z: goal.z, room: roomAt(map, goal.floor, goal.x, goal.z) },
+    reach, steps, i: 0, best: Infinity, stuck: 0 };
 }
 
 // Advances `route` by dt for the player at pos ({floor,x,z}) on collision grid g (of pos.floor).
 // Mutates route; returns { x, z, dx, dz, event } where event is
 //   null      still walking (dx/dz = actual displacement this frame),
-//   'arrive'  within route.reach of the goal (interact targets),
+//   'arrive'  within route.reach of the goal and in the goal's room (interact targets),
 //   'done'    walked onto the final point,
 //   'stairs' | 'passage'  standing at the near end of a floor link; event id in route.linkId,
 //             the caller asks the host and replans after the teleport,
@@ -64,7 +67,8 @@ export function planRoute(map, from, goal, navOpts, reach = 0) {
 export function stepRoute(route, g, pos, dt, speed = SPEED) {
   const out = (event, x = pos.x, z = pos.z) => ({ x, z, dx: x - pos.x, dz: z - pos.z, event });
   const gl = route.goal;
-  if (route.reach > 0 && gl.floor === pos.floor && Math.hypot(gl.x - pos.x, gl.z - pos.z) <= route.reach) return out('arrive');
+  if (route.reach > 0 && gl.floor === pos.floor && Math.hypot(gl.x - pos.x, gl.z - pos.z) <= route.reach
+    && roomAt(route.map, pos.floor, pos.x, pos.z) === gl.room) return out('arrive');
   const s = route.steps[route.i];
   if (!s) return out('done');
   if (s.kind === 'stairs' || s.kind === 'passage') { route.linkId = s.id; return out(s.kind); }

@@ -46,8 +46,8 @@ test('interact targets arrive within ARRIVE', () => {
 
 test('a waypoint behind a wall gives up as stuck instead of jittering', () => {
   const g = buildGrid(M, 0);
-  const route = { goal: { floor: 0, x: 6, z: 2 }, reach: 0, steps: [{ floor: 0, x: 6, z: 3.3, kind: 'walk' }], i: 0, best: Infinity, stuck: 0 };
-  let pos = { floor: 0, x: 2, z: 3.3 }, ev = null, t = 0;
+  const route = { goal: { floor: 0, x: 6, z: 2 }, reach: 0, steps: [{ floor: 0, x: 6, z: 3.0, kind: 'walk' }], i: 0, best: Infinity, stuck: 0 };
+  let pos = { floor: 0, x: 2, z: 3.0 }, ev = null, t = 0;
   while (!ev && t < 5) { const r = stepRoute(route, g, pos, 1 / 30); pos = { ...pos, x: r.x, z: r.z }; ev = r.event; t += 1 / 30; }
   assert.equal(ev, 'stuck');
   assert.ok(t < 2.5, `gave up after about a second at the wall (${t.toFixed(2)} s)`);
@@ -89,4 +89,24 @@ test('navOptions follows the phase floors and passage knowledge', () => {
   S.players.p2 = { role: knower };
   assert.equal(navOptions(S, CASE, 'p2', 0).passageOpen, true);
   assert.equal(navOptions(null, CASE, 'p1', 1).floorsOpen[0], 1);
+});
+
+test('an interact target across a wall is not reached through the wall', () => {
+  const g = buildGrid(M, 0);
+  const from = { floor: 0, x: 3.15, z: 3.0 }, goal = { floor: 0, x: 4.7, z: 3.0 }; // 1.55 m apart, wall between
+  const route = planRoute(M, from, goal, { floorsOpen: [0] }, ARRIVE);
+  const first = stepRoute(route, g, from, 1 / 30);
+  assert.equal(first.event, null, 'keeps walking instead of arriving through the wall');
+  let pos = { ...from, x: first.x, z: first.z }, ev = null;
+  for (let k = 0; k < 300 && !ev; k++) { const r = stepRoute(route, g, pos, 1 / 30); pos = { ...pos, x: r.x, z: r.z }; ev = r.event; }
+  assert.equal(ev, 'arrive');
+  assert.ok(pos.x >= 4, `arrived on the goal's side of the wall (x ${pos.x.toFixed(2)})`);
+});
+
+test('every case interact target lies in its own room, so it can be arrived at', () => {
+  const MAP = CASE.MAP;
+  const floorOf = id => MAP.rooms.find(r => r.id === id).floor;
+  const roomOf = (room, x, z) => planRoute(MAP, { floor: floorOf(room), x, z }, { floor: floorOf(room), x, z }, { floorsOpen: [0, 1] }, ARRIVE).goal.room;
+  for (const it of CASE.ITEMS) assert.equal(roomOf(it.room, it.pos[0], it.pos[2]), it.room, `item ${it.id}`);
+  for (const s of [...MAP.stairs, ...MAP.passages]) for (const e of [s.a, s.b]) assert.equal(roomOf(e.room, e.x, e.z), e.room, `${s.id} end in ${e.room}`);
 });
