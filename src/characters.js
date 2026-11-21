@@ -1,6 +1,9 @@
 // Block characters: ~1.6 m tall, 0.5 m cube head with a 16x16 pixel face.
 // Geometries and materials are shared across every character (cached by size / colour / look),
 // so 8 characters on screen cost ~12 draw calls each and almost no extra GPU memory.
+// The only per-character GPU resources are the name-tag canvas texture and sprite material:
+// call disposeCharacter(ch) when a character leaves. Never traverse-and-dispose a character's
+// group yourself — that would destroy the shared geometry / material / texture caches.
 import * as THREE from 'three';
 import { makeTexture } from './textures.js';
 
@@ -262,6 +265,32 @@ function outfitBlocks(look) {
   return L;
 }
 
+function pearlPairGeo() {
+  let g = geoCache.get('pearlPair');
+  if (!g) {
+    const a = new THREE.BoxGeometry(0.09, 0.09, 0.09);
+    const n = a.attributes.position.count;
+    const pos = [], nor = [], uv = [], idx = [];
+    [1, -1].forEach((sx, k) => {
+      for (let i = 0; i < n; i++) {
+        pos.push(a.attributes.position.getX(i) + sx * 0.28, a.attributes.position.getY(i) - 0.12, a.attributes.position.getZ(i) + 0.2);
+        nor.push(a.attributes.normal.getX(i), a.attributes.normal.getY(i), a.attributes.normal.getZ(i));
+        uv.push(a.attributes.uv.getX(i), a.attributes.uv.getY(i));
+      }
+      for (const i of a.index.array) idx.push(i + k * n);
+    });
+    a.dispose();
+    g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    g.setIndex(idx);
+    g.computeBoundingSphere();
+    geoCache.set('pearlPair', g);
+  }
+  return g;
+}
+
 function makeLabelSprite() {
   const canvas = document.createElement('canvas');
   canvas.width = 256; canvas.height = 64;
@@ -324,15 +353,10 @@ export function makeCharacter(look, label = '') {
   headCenter.add(new THREE.Mesh(frontTexturedBox(HEAD, HEAD, HEAD, 8, 15),
     texMat(`faceMat|${look.skin}|${look.hair}|${look.hairColor}|${has(look, 'glasses')}`, faceTexture(look))));
   blocks(headBlocks(look), headCenter);
-  if (has(look, 'pearl_earrings')) { // pearl mini blocks keep the shared pearl texture
-    const g = geoCache.get('pearl') || geoCache.set('pearl', new THREE.BoxGeometry(0.07, 0.07, 0.07)).get('pearl');
-    const m = texMat('pearlMat', makeTexture('pearl'));
-    for (const sx of [1, -1]) {
-      const e = new THREE.Mesh(g, m);
-      e.position.set(sx * 0.27, -0.17, 0.02);
-      headCenter.add(e);
-    }
-  }
+  // pearls sit just in front of the long-hair side curtains (x 0.25..0.31, front z=0.15) at cheek
+  // height, so the black hair frames them from the front and the angled top-down camera
+  // (lower, they blend into the cream sleeves); one mesh for the pair
+  if (has(look, 'pearl_earrings')) headCenter.add(new THREE.Mesh(pearlPairGeo(), texMat('pearlMat', makeTexture('pearl'))));
 
   // arms pivot at the shoulders: sleeve + hand (white gloves replace skin)
   const hand = has(look, 'white_gloves') ? '#f7f7f2' : look.skin;
@@ -369,8 +393,20 @@ export function makeCharacter(look, label = '') {
     group,
     parts: { head, body, armL, armR, legL, legR },
     setLabel(text) { drawLabel(sprite, text); },
-    _rig: { hips, walk: 0, crouch: 0, phase: Math.random() * 6 },
+    _rig: { hips, sprite, walk: 0, crouch: 0, phase: Math.random() * 6 },
   };
+}
+
+// Frees only what this character owns: its name-tag canvas texture and sprite material.
+// Geometries, block/face/torso materials and textures are shared caches and stay alive.
+export function disposeCharacter(ch) {
+  const sprite = ch._rig.sprite;
+  if (ch.group.parent) ch.group.parent.remove(ch.group);
+  if (!sprite) return;
+  sprite.material.map.dispose();
+  sprite.material.dispose();
+  sprite.material.map.image.width = sprite.material.map.image.height = 0; // release the canvas backing store
+  ch._rig.sprite = null;
 }
 
 // ── animation ──────────────────────────────────────────────────────────
