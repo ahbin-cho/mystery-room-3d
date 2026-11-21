@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Controls (dev)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>
+html,body{margin:0;height:100%;background:#0e1424;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
+canvas{display:block}
+#hud{position:fixed;left:8px;top:8px;color:#eef;font:12px/1.4 monospace;white-space:pre;pointer-events:none;text-shadow:0 1px 2px #000}
+#bar{position:fixed;right:8px;top:8px;display:flex;flex-direction:column;gap:4px}
+#bar button{font:13px sans-serif;padding:6px 9px;border-radius:6px;border:0;background:#f4e6c8;color:#3a2a1e}
+#bar button.on{background:#7a4a1a;color:#fff}
+</style>
+<script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+</head>
+<body>
+<div id="hud"></div>
+<div id="bar"><button id="f2">2층 열기</button><button id="ps">통로 알기</button><button id="pins">마커 표시</button></div>
+<script type="module">
+// Throwaway page: world + one character + controls, with a fake host that answers stairs/passage.
+import * as THREE from 'three';
+import { CASE } from '../src/cases/owl-manor.js';
+import { buildWorld, setVisibleFloor, makeSceneLights, updateLights } from '../src/world.js';
+import { makeCharacter, animateCharacter } from '../src/characters.js';
+import { createControls } from '../src/controls.js';
+import { createState } from '../src/core/rules.js';
+import { roomAt } from '../src/core/map.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0e1424);
+scene.fog = new THREE.Fog(0x0e1424, 30, 70);
+scene.add(makeSceneLights());
+const world = buildWorld(CASE);
+world.floors.forEach(g => scene.add(g));
+scene.add(world.lightPool);
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 200);
+
+const S = createState(CASE);
+S.phase = 'investigate1';
+S.players.me = { role: 'yujin', floor: 0, x: 14, z: 15 };
+const me = { floor: 0, x: 14, z: 15, ry: Math.PI, moving: false };
+const ch = makeCharacter(CASE.ROLES.yujin.look, '나');
+scene.add(ch.group);
+
+const log = [];
+const say = s => { log.unshift(s); log.length = Math.min(log.length, 5); };
+const floorOf = id => CASE.MAP.rooms.find(r => r.id === id).floor;
+function teleport(end) {
+  setTimeout(() => { // fake host round trip
+    me.floor = floorOf(end.room); me.x = end.x; me.z = end.z;
+    setVisibleFloor(world, me.floor);
+    controls.setFloor(me.floor);
+  }, 150);
+}
+const controls = createControls({
+  canvas: renderer.domElement, camera, map: CASE.MAP, world, me, caseData: CASE, pid: 'me',
+  getState: () => S,
+  onInteract: t => say(`interact ${t.id}`),
+  onStairs: id => {
+    say(`stairs ${id}`);
+    const st = CASE.MAP.stairs.find(s => s.id === id);
+    const dest = floorOf(st.a.room) === me.floor ? st.b : st.a;
+    if (!S.floorsOpen.includes(floorOf(dest.room))) { say('host: 2층은 조사 2부터 열려요'); return; }
+    teleport(dest);
+  },
+  onPassage: () => {
+    say('passage');
+    const ps = CASE.MAP.passages[0];
+    const d = e => (me.x - e.x) ** 2 + (me.z - e.z) ** 2;
+    teleport(d(ps.a) <= d(ps.b) ? ps.b : ps.a);
+  },
+  onBlocked: r => say(`blocked: ${r}`),
+});
+setVisibleFloor(world, 0);
+
+document.getElementById('f2').onclick = e => { const on = !S.floorsOpen.includes(1); S.floorsOpen = on ? [0, 1] : [0]; e.target.classList.toggle('on', on); };
+document.getElementById('ps').onclick = e => { S.passageKnown.me = !S.passageKnown.me; e.target.classList.toggle('on', S.passageKnown.me); };
+const pinMat = new THREE.MeshBasicMaterial({ color: 0xff3d9a, depthTest: false });
+const pinGeo = new THREE.SphereGeometry(0.09, 8, 6);
+const pins = [...Object.values(world.itemMarkers), ...Object.values(world.stairMarkers).flatMap(s => [s.a, s.b]),
+  ...Object.values(world.passageMarkers).flatMap(s => [s.a, s.b])].map(m => { const p = new THREE.Mesh(pinGeo, pinMat); p.renderOrder = 9; p.visible = false; m.add(p); return p; });
+document.getElementById('pins').onclick = e => { const on = !pins[0].visible; pins.forEach(p => { p.visible = on; }); e.target.classList.toggle('on', on); };
+
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); });
+
+const hud = document.getElementById('hud');
+const times = [];
+let last = performance.now(), t = 0, frame = 0, room = null, fps = 0;
+(function loop() {
+  const now = performance.now();
+  const dt = (now - last) / 1000; last = now; t += dt;
+  times.push(now); if (times.length > 61) times.shift();
+  if (times.length > 1) fps = (times.length - 1) * 1000 / (times[times.length - 1] - times[0]);
+  controls.update(dt);
+  ch.group.position.set(me.x, me.floor * 3, me.z);
+  ch.group.rotation.y = me.ry;
+  animateCharacter(ch, me.moving ? 'walk' : 'idle', t, dt);
+  const r = roomAt(CASE.MAP, me.floor, me.x, me.z);
+  if (r !== room) { room = r; updateLights(world, me.floor, r); }
+  renderer.render(scene, camera);
+  if (frame++ % 10 === 0) hud.textContent = `fps ${fps.toFixed(0)}  calls ${renderer.info.render.calls}  floor ${me.floor + 1}  ${room}\n`
+    + `x ${me.x.toFixed(2)} z ${me.z.toFixed(2)} ${me.moving ? 'moving' : ''}\n${log.join('\n')}`;
+  requestAnimationFrame(loop);
+})();
+window.__ = { THREE, scene, camera, renderer, world, me, S, controls, CASE, log, stats: () => ({ fps: +fps.toFixed(1), calls: renderer.info.render.calls, floor: me.floor, x: me.x, z: me.z, room, log: [...log] }) };
+</script>
+</body>
+</html>
