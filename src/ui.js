@@ -25,12 +25,16 @@
 //                                   for everyone; container items appear after this player's search)
 //   ui.onReveal(cb)                 cb(itemId) after a local reveal → main shows the world visual
 //   ui.isModalOpen()                start screen, card, bag, notebook, vote, reveal or connection
-//                                   overlay is open → main pauses joystick + keyboard movement
+//                                   overlay is open → main pauses joystick + keyboard movement, AND
+//                                   should skip or throttle its own world render (e.g. every 4th
+//                                   frame): the dimmed overlay covers it, and the evidence mini view
+//                                   (shared renderer, 30 fps, DPR ≤ 1.5) is then the only GPU work
 //   ui.showConnection(status, info) 'reconnecting' (info = try number) → blocking overlay;
 //                                   'connected' → hide; 'disconnected' (info = 'refused' | 'replaced'
 //                                   | 'lost' | 'host-left') → message + "처음으로". onState also hides
 //                                   the reconnecting overlay.
-//   ui.update(dt)                   each frame: phase timer + evidence mini view animation
+//   ui.update(dt)                   each frame: phase timer (DOM written once per shown second) +
+//                                   evidence mini view. setNearby is cheap to call every frame too.
 //   ui.toast(text), ui.openNotebook(tab), ui.openBag()
 //
 // Mini views and bag icons share ONE small WebGLRenderer (phones limit WebGL contexts): the mini view
@@ -44,7 +48,7 @@ import { makeCharacter, disposeCharacter } from './characters.js';
 import { canUsePassage } from './core/rules.js';
 import {
   checkSafeCode, bagItems, evidenceList, searchStep, worldItemVisible, cardFor, canInvestigate,
-  canPickPhase, phaseLabel, hostNextLabel, formatRemaining, voteVerdict, containerName,
+  canPickPhase, phaseLabel, hostNextLabel, formatRemaining, voteVerdict, containerName, searchGroup,
 } from './ui-logic.js';
 
 const CSS = `
@@ -117,7 +121,8 @@ const CSS = `
 .owl-ui .ev{display:block;width:100%;text-align:left;font-family:'Gowun Dodum',sans-serif;border:2px dashed #d8c39b;border-radius:14px;padding:10px;margin-bottom:8px;background:rgba(255,255,255,.5);box-shadow:none}
 .owl-ui .ev .n{font-family:'Jua';font-size:16px}
 .owl-ui .who{display:flex;gap:10px;align-items:flex-start;padding:10px;border-radius:14px;background:rgba(255,255,255,.55);margin-bottom:8px}
-.owl-ui .dot{width:34px;height:34px;border-radius:50%;flex:none;border:3px solid var(--ink)}
+.owl-ui .dot{width:44px;height:44px;border-radius:50%;flex:none;border:3px solid var(--ink);background:#f3e6cc;image-rendering:pixelated;object-fit:cover}
+.owl-ui .mini-gl{width:100%;height:100%;display:block}
 .owl-ui .map{width:100%;height:auto;background:#fffaf0;border-radius:14px;border:2px solid #e2cfa9}
 .owl-ui .voteBtn{width:100%;display:flex;align-items:center;gap:10px;text-align:left;margin-bottom:8px}
 .owl-ui .voteBtn.on{outline:4px solid var(--red)}
@@ -148,12 +153,20 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 let R3 = null;
 function r3() {
   if (!R3) {
-    R3 = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    R3 = new THREE.WebGLRenderer({ antialias: false, alpha: true });
     R3.setPixelRatio(1);
     R3.outputColorSpace = THREE.SRGBColorSpace;
     R3.setClearColor(0x000000, 0);
+    R3.domElement.className = 'mini-gl';
   }
   return R3;
+}
+// Resize the shared renderer only when the size really changes (resizing reallocates the buffer).
+let r3w = 0, r3h = 0;
+function sizeR3(w, h) {
+  const R = r3();
+  if (w !== r3w || h !== r3h) { R.setSize(w, h, false); r3w = w; r3h = h; }
+  return R;
 }
 function miniLights(scene) {
   scene.add(new THREE.HemisphereLight(0xffffff, 0xb59b7a, 1.7));
@@ -196,13 +209,16 @@ function modelRig(caseData, id) {
   });
   return { holder, model, parts, radius };
 }
+const EXPLODE_M4 = new THREE.Matrix4();
 function explode(rig, amount) {
-  const m4 = new THREE.Matrix4();
-  for (const { mesh, base } of rig.parts) {
-    base.forEach((b, i) => {
+  const m4 = EXPLODE_M4;
+  for (let k = 0; k < rig.parts.length; k++) {
+    const { mesh, base } = rig.parts[k];
+    for (let i = 0; i < base.length; i++) {
+      const b = base[i];
       m4.makeScale(b.s, b.s, b.s).setPosition(b.p.x + b.dir.x * amount, b.p.y + b.dir.y * amount, b.p.z + b.dir.z * amount);
       mesh.setMatrixAt(i, m4);
-    });
+    }
     mesh.instanceMatrix.needsUpdate = true;
   }
 }
@@ -222,13 +238,12 @@ function itemIcon(caseData, id) {
   if (iconCache.has(id)) return iconCache.get(id);
   let url = '';
   try {
-    const R = r3();
     const scene = new THREE.Scene();
     miniLights(scene);
     const rig = modelRig(caseData, id);
     rig.holder.rotation.set(0.35, -0.6, 0);
     scene.add(rig.holder);
-    R.setSize(128, 128, false);
+    const R = sizeR3(128, 128);
     R.render(scene, fitCamera(rig.radius, 1));
     const c = document.createElement('canvas');
     c.width = c.height = 128;
@@ -239,6 +254,37 @@ function itemIcon(caseData, id) {
   iconCache.set(id, url);
   return url;
 }
+
+// Head-and-shoulders portrait of a block character (role cards, people tab, vote buttons).
+const portraitCache = new Map();
+function portrait(look) {
+  const key = JSON.stringify(look);
+  if (portraitCache.has(key)) return portraitCache.get(key);
+  let url = '';
+  try {
+    const scene = new THREE.Scene();
+    scene.add(new THREE.HemisphereLight(0xfff4e6, 0x8a6a50, 1.6));
+    const d = new THREE.DirectionalLight(0xffffff, 1.1);
+    d.position.set(1, 2, 3);
+    scene.add(d);
+    const ch = makeCharacter(look, '');
+    ch.group.rotation.y = -0.25;
+    scene.add(ch.group);
+    const cam = new THREE.PerspectiveCamera(30, 1, 0.1, 20);
+    cam.position.set(0, 1.32, 1.65); // head centre is at y 1.35 (hips 0.6 + torso 0.5 + head/2)
+    cam.lookAt(0, 1.22, 0);
+    const R = sizeR3(96, 96);
+    R.render(scene, cam);
+    const c = document.createElement('canvas');
+    c.width = c.height = 96;
+    c.getContext('2d').drawImage(R.domElement, 0, 0);
+    url = c.toDataURL();
+    disposeCharacter(ch);
+  } catch { /* no WebGL */ }
+  portraitCache.set(key, url);
+  return url;
+}
+const portraitImg = (look, extra = '') => `<img class="dot" alt="" src="${portrait(look)}"${extra}/>`;
 
 let photoUrl = null;
 function partyPhoto(caseData) {
@@ -270,7 +316,7 @@ function partyPhoto(caseData) {
     const cam = new THREE.PerspectiveCamera(30, 1.5, 0.1, 50);
     cam.position.set(0, 1.45, 4.6);
     cam.lookAt(0, 1.1, 0);
-    R.setSize(750, 500, false);
+    sizeR3(750, 500);
     R.render(scene, cam);
     const c = document.createElement('canvas');
     c.width = 750; c.height = 500;
@@ -415,45 +461,56 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
   }
 
   // ── mini view ──
-  function startMini(id, canvas) {
+  // The shared renderer's own canvas is put into the card (no 2D copy). It is sized when the card
+  // opens and on window resize only, rendered at 30 fps with DPR capped at 1.5, and nothing is
+  // allocated per frame.
+  const MINI_DT = 1 / 30;
+  function startMini(id, slot) {
     try {
       const scene = new THREE.Scene();
       miniLights(scene);
       const rig = modelRig(CASE, id);
       scene.add(rig.holder);
-      mini = { id, canvas, ctx: canvas.getContext('2d'), scene, rig, t: 0, cam: null, w: 0, h: 0 };
+      const R = r3();
+      slot.appendChild(R.domElement);
+      mini = { id, slot, scene, rig, t: 0, acc: MINI_DT, cam: null, w: 0, h: 0 };
+      sizeMini();
       drawMini(0);
     } catch { mini = null; }
   }
+  function sizeMini() {
+    if (!mini) return;
+    const dpr = Math.min(devicePixelRatio || 1, 1.5);
+    const w = Math.round(mini.slot.clientWidth * dpr), h = Math.round(mini.slot.clientHeight * dpr);
+    if (!w || !h) return;
+    mini.w = w; mini.h = h;
+    mini.cam = fitCamera(mini.rig.radius * 1.15, w / h);
+  }
+  addEventListener('resize', sizeMini);
   function drawMini(dt) {
     if (!mini) return;
-    if (!mini.canvas.isConnected) { stopMini(); return; }
-    const dpr = Math.min(devicePixelRatio || 1, 2);
-    const w = Math.round(mini.canvas.clientWidth * dpr), h = Math.round(mini.canvas.clientHeight * dpr);
-    if (!w || !h) return;
-    if (w !== mini.w || h !== mini.h) {
-      mini.canvas.width = mini.w = w;
-      mini.canvas.height = mini.h = h;
-      mini.cam = fitCamera(mini.rig.radius * 1.15, w / h);
-    }
+    if (!mini.slot.isConnected) { stopMini(); return; }
     mini.t += dt;
+    mini.acc += dt;
+    if (mini.acc < MINI_DT || !mini.cam) return;
+    mini.acc = 0;
     const t = mini.t;
     mini.rig.holder.rotation.y = t * 0.6;
     mini.rig.holder.rotation.x = 0.25 + Math.sin(t * 0.5) * 0.12;
     explode(mini.rig, Math.max(0, Math.sin(t * 0.9)) * 0.12 * mini.rig.radius);
-    const R = r3();
-    R.setSize(w, h, false);
+    const R = sizeR3(mini.w, mini.h); // no-op unless an icon render resized it meanwhile
+    if (R.domElement.parentNode !== mini.slot) mini.slot.appendChild(R.domElement);
     R.render(mini.scene, mini.cam);
-    mini.ctx.clearRect(0, 0, w, h);
-    mini.ctx.drawImage(R.domElement, 0, 0);
   }
   function stopMini() {
     if (!mini) return;
     disposeRig(mini.rig);
+    if (R3?.domElement.parentNode) R3.domElement.remove();
     mini = null;
   }
 
   // ── HUD ──
+  let phaseHtml = '';
   function renderHud() {
     const s = S();
     if (!s) return;
@@ -461,7 +518,7 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
     let txt = esc(phaseLabel(ph));
     if (ph === 'lobby') txt += ` · ${s.order.filter(id => s.players[id]).length}명`;
     if (s.phaseEndsAt) txt += ' <b data-r="timer"></b>';
-    $('phase').innerHTML = txt;
+    if (txt !== phaseHtml) { $('phase').innerHTML = phaseHtml = txt; timerText = null; }
     tickTimer();
     const label = hostNextLabel(ph);
     $('host').classList.toggle('hidden', !net?.isHost || !label);
@@ -473,10 +530,14 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
     $('cnt').classList.toggle('hidden', n === 0);
     renderAct();
   }
+  let timerText = null; // last text written (null = timer element was just rebuilt)
   function tickTimer() {
-    const tm = $('timer');
     const s = S();
-    if (tm && s?.phaseEndsAt) tm.textContent = formatRemaining(s.phaseEndsAt - Date.now());
+    if (!s?.phaseEndsAt) return;
+    const txt = formatRemaining(s.phaseEndsAt - Date.now());
+    if (txt === timerText) return;
+    const tm = $('timer');
+    if (tm) { tm.textContent = txt; timerText = txt; }
   }
   const HOST_CONFIRM = {
     lobby: '지금 인원으로 게임을 시작할까요?\n(시작 후 들어온 사람은 남은 역할이나 조수 탐정이 돼요)',
@@ -504,11 +565,13 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
     if (t.kind === 'passage') return canUsePassage(s, CASE, pid());
     return t.kind === 'stair' || t.kind === 'stairs';
   }
+  let actShown = null; // last label written ('' = hidden)
   function renderAct() {
-    const ok = nearbyOk(nearby);
-    $('act').classList.toggle('hidden', !ok);
-    if (!ok) return;
-    $('actTxt').textContent = nearby.kind === 'item' ? '🔍 조사' : nearby.kind === 'passage' ? '🕳️ 통로' : '🪜 계단';
+    const label = !nearbyOk(nearby) ? '' : nearby.kind === 'item' ? '🔍 조사' : nearby.kind === 'passage' ? '🕳️ 통로' : '🪜 계단';
+    if (label === actShown) return;
+    actShown = label;
+    $('act').classList.toggle('hidden', !label);
+    if (label) $('actTxt').textContent = label;
   }
   $('act').onclick = () => {
     if (!nearbyOk(nearby)) return;
@@ -557,7 +620,7 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
   // ── role card ──
   function roleCardHtml(k) {
     const r = CASE.ROLES[k] ?? CASE.ROLES.helper;
-    return `<div class="row" style="gap:12px;margin-bottom:8px;align-items:flex-start"><div class="dot" style="background:${esc(r.look.top)}"></div>
+    return `<div class="row" style="gap:12px;margin-bottom:8px;align-items:flex-start">${portraitImg(r.look)}
       <div><div class="jua" style="font-size:22px">${esc(r.name)} <span class="tag">${esc(r.job)}</span></div><div class="sub" style="margin:0">${esc(r.public)}</div></div></div>
       <div class="secret"><h3>🤫 나만 아는 비밀</h3><p>${esc(r.secret)}</p><h3>👀 내가 본 것</h3><p>${esc(r.knows)}</p><h3>🎯 목표</h3><p>${esc(r.goal)}</p>
       ${r.knowsPassage ? '<p>🕳️ 서재 책장과 온실 화분대를 잇는 비밀 통로를 처음부터 알고 있어요. 언제든 쓸 수 있어요.</p>' : ''}</div>`;
@@ -587,17 +650,19 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
   }
   function openSearch(id) {
     const it = itemDef(id);
-    openModal('search', id, `<div class="stamp">SEARCH</div><p class="sub jua" style="margin:0">${esc(room(it.room)?.name)}</p>
+    openModal('search', id, `<div class="stamp">수색</div><p class="sub jua" style="margin:0">${esc(room(it.room)?.name)}</p>
       <h2 class="title" style="font-size:26px">🔍 ${esc(containerName(it.container))} 조사</h2>
       <div class="progress" role="progressbar" aria-label="뒤지는 중"><i></i></div><p class="jua" style="text-align:center">뒤지는 중…</p>`);
     searchTimer = setTimeout(() => {
       if (modal?.kind !== 'search' || modal.arg !== id) return;
-      reveal(id);
-      openCard(id);
+      // one search finds everything in that container (guestA's bag: manuscript + pills)
+      const group = searchGroup(CASE, id);
+      for (const g of group) reveal(g);
+      openCard(id, null, group);
     }, 1000);
   }
   function openSafe(id) {
-    openModal('code', id, `<div class="stamp">LOCKED</div><p class="sub jua" style="margin:0">${esc(room(itemDef(id).room)?.name)}</p>
+    openModal('code', id, `<div class="stamp">잠김</div><p class="sub jua" style="margin:0">${esc(room(itemDef(id).room)?.name)}</p>
       <h2 class="title" style="font-size:26px">🔐 벽 금고</h2><p>네 자리 비밀번호를 입력하세요.</p>
       <div class="stack"><input class="code" data-r="safeIn" inputmode="numeric" maxlength="4" autocomplete="off" aria-label="금고 비밀번호" />
       <div class="err" data-r="safeErr" role="alert"></div><button class="primary" data-r="safeGo">열기</button></div>`);
@@ -621,7 +686,8 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
     input.onkeydown = e => { if (e.key === 'Enter') tryOpen(); };
     card.addEventListener('animationend', () => card.classList.remove('shake'), { once: true });
   }
-  function openCard(id, from = null) {
+  // group: items found together by one search; the card then lists them so none is missed.
+  function openCard(id, from = null, group = null) {
     const it = itemDef(id);
     const c = cardFor(S(), CASE, pid(), id);
     const idx = CASE.ITEMS.indexOf(it) + 1;
@@ -629,11 +695,12 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
     if (!gone) examined.add(id);
     const visual = gone ? '' : id === 'photo'
       ? `<img class="photo" alt="파티 단체 사진: 왼쪽부터 차유진, 한별, 한겨울, 세라, 도윤" src="${partyPhoto(CASE)}"/><p class="caption">송년 파티 · 밤 9시 30분</p>`
-      : '<canvas class="mini" data-r="mini" aria-hidden="true"></canvas>';
+      : '<div class="mini" data-r="mini" aria-hidden="true"></div>';
     openModal('item', id, `<div class="stamp">EVIDENCE #${String(idx).padStart(2, '0')}</div>
       <p class="sub jua" style="margin:0">${esc(room(it.room)?.name)}${it.kind === 'fixed' ? ' · 고정 증거' : ''}</p>
       <h2 class="title" style="font-size:26px">${gone ? '사라진 증거' : esc(it.name)}</h2>${visual}<div data-r="body"></div>`,
     { back: from === 'bag' ? { kind: 'bag' } : from === 'note' ? { kind: 'note', arg: 'ev' } : null });
+    modal.group = group && group.length > 1 ? group : null;
     if (!gone && id !== 'photo') startMini(id, $('mini'));
     if (id === 'oddbook' && !gone) {
       const s = S();
@@ -647,8 +714,15 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
     const s = S();
     const it = itemDef(id);
     const c = cardFor(s, CASE, pid(), id);
+    const group = modal?.group;
+    const found = group ? `<div class="found"><p class="jua" style="margin:12px 0 6px">🔍 ${esc(containerName(it.container))}에서 ${group.length}개를 찾았다</p>
+      <div class="row" style="flex-wrap:wrap">${group.map(g => `<button data-found="${esc(g)}" class="${g === id ? 'navy' : ''}" ${g === id ? 'aria-current="true"' : ''}>${esc(itemDef(g).name)}</button>`).join('')}</div></div>` : '';
+    const bindFound = () => card.querySelectorAll('[data-found]').forEach(b => {
+      if (b.dataset.found !== id) b.onclick = () => openCard(b.dataset.found, null, group);
+    });
     if (c.mode === 'gone') {
-      body.innerHTML = '<p>여기엔 <b>무언가 있었던 흔적</b>만 남아 있다. 누군가 먼저 챙겨 간 것 같다…</p>';
+      body.innerHTML = '<p>여기엔 <b>무언가 있었던 흔적</b>만 남아 있다. 누군가 먼저 챙겨 간 것 같다…</p>' + found;
+      bindFound();
       return;
     }
     let html = `<p>${esc(it.desc)}</p>`;
@@ -670,7 +744,8 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
     } else if (c.mode === 'shared') {
       act = `<p><span class="tag pub">📢 공개됨</span><span class="tag">🎒 ${esc(s.players[s.items[id].holder]?.name ?? '')}의 가방</span></p>`;
     }
-    body.innerHTML = html + `<div class="stack" style="margin-top:10px">${act}</div>`;
+    body.innerHTML = html + `<div class="stack" style="margin-top:10px">${act}</div>` + found;
+    bindFound();
     $('pick')?.addEventListener('click', () => pick(id));
     $('share')?.addEventListener('click', () => send({ t: 'share', id }));
     $('sharePassage')?.addEventListener('click', () => send({ t: 'sharePassage' }));
@@ -718,7 +793,7 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
       ? `<div class="grid">${list.map(({ item, shared }) => `<button data-item="${esc(item.id)}">
           ${shared ? '<span class="tag pub">공개됨</span>' : ''}<img alt="" src="${itemIcon(CASE, item.id)}"/><span>${esc(item.name)}</span></button>`).join('')}</div>`
       : '<p>가방이 비어 있어요.</p><p class="sub">챙길 수 있는 증거 앞에서 🔍 조사 → <b>가방에 넣기</b>를 눌러 보세요. 서랍·옷장·가방·화분 속도 뒤져 보세요.</p>';
-    openModal('bag', null, `<div class="stamp">BAG</div><h2 class="title" style="font-size:26px">🎒 내 가방 <span class="tag">${list.length}개</span></h2>
+    openModal('bag', null, `<div class="stamp">가방</div><h2 class="title" style="font-size:26px">🎒 내 가방 <span class="tag">${list.length}개</span></h2>
       <p class="sub">가방 속 증거는 나만 볼 수 있어요. 눌러서 살펴보고 공개할 수 있어요.</p>${grid}`);
     card.querySelectorAll('[data-item]').forEach(b => { b.onclick = () => openItem(b.dataset.item, 'bag'); });
   }
@@ -750,7 +825,7 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
         const r = CASE.ROLES[rk];
         const ps = byRole[rk] ?? [];
         const npc = !ps.length && s.phase !== 'lobby';
-        return `<div class="who"><div class="dot" style="background:${esc(r.look.top)}"></div><div>
+        return `<div class="who">${portraitImg(r.look)}<div>
           <div class="jua" style="font-size:17px">${esc(r.name)} <span class="tag">${esc(r.job)}</span>${ps.map(p => `<span class="tag">🎮 ${esc(p.name)}</span>`).join('')}${npc ? '<span class="tag">NPC</span>' : ''}</div>
           <div style="font-size:14px">${esc(r.public)}</div>${npc ? `<div style="font-size:14px;margin-top:4px">📝 ${esc(r.npc)}</div>` : ''}</div></div>`;
       }).join('');
@@ -809,7 +884,7 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
     const done = voters.filter(id => s.votes[id]).length;
     const btns = ROLE_KEYS.map(rk => {
       const r = CASE.ROLES[rk];
-      return `<button class="voteBtn ${my === rk ? 'on' : ''}" data-v="${rk}" aria-pressed="${my === rk}"><span class="dot" style="background:${esc(r.look.top)}"></span><span><b>${esc(r.name)}</b> <span class="tag">${esc(r.job)}</span></span></button>`;
+      return `<button class="voteBtn ${my === rk ? 'on' : ''}" data-v="${rk}" aria-pressed="${my === rk}">${portraitImg(r.look)}<span><b>${esc(r.name)}</b> <span class="tag">${esc(r.job)}</span></span></button>`;
     }).join('');
     const canVote = s.phase === 'vote';
     openModal('vote', null, `<div class="stamp">VOTE</div><h2 class="title">범인은 누구?</h2><p class="sub">${canVote ? '한 명을 골라 주세요. 결과 공개 전까지 바꿀 수 있어요.' : '투표가 끝났어요.'}</p>${btns}
@@ -828,7 +903,7 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
         <div class="bar" style="width:${Math.max(3, n / total * 100)}%;background:${culprit ? '#b5352d' : '#6f625a'}"></div></div>`;
     }).join('');
     openModal('reveal', null, `<div class="stamp">CASE CLOSED</div><h2 class="title" style="margin-top:34px">${esc(v.headline)}</h2>
-      ${v.tie ? '<p class="sub">표가 갈려 아무도 지목되지 않았어요. 범인이 빠져나갔다!</p>' : ''}${bars}
+      ${v.noVotes ? '<p class="sub">아무도 투표하지 않아 범인이 빠져나갔다!</p>' : v.tie ? '<p class="sub">표가 갈려 아무도 지목되지 않았어요. 범인이 빠져나갔다!</p>' : ''}${bars}
       <h3>📜 사건의 진상</h3><p style="white-space:pre-line">${esc(CASE.truth)}</p>
       <h3>🤫 모두의 비밀</h3>${ROLE_KEYS.map(rk => `<p style="font-size:14px"><b>${esc(CASE.ROLES[rk].name)}</b>: ${esc(CASE.ROLES[rk].secret)}</p>`).join('')}`);
   }
@@ -845,7 +920,7 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
       return;
     }
     const [title, msg] = DISCONNECT_TEXT[info] ?? ['연결이 끝났어요', '게임과의 연결이 끝났어요.'];
-    c.innerHTML = `<div class="stamp">OFFLINE</div><h2 class="title" style="font-size:26px">${esc(title)}</h2><p>${esc(msg)}</p>
+    c.innerHTML = `<div class="stamp">연결 끊김</div><h2 class="title" style="font-size:26px">${esc(title)}</h2><p>${esc(msg)}</p>
       <button class="primary" data-r="restart" style="width:100%;margin-top:12px">처음으로</button>`;
     $('restart').onclick = () => {
       const keep = info === 'lost' && net?.code ? `?room=${encodeURIComponent(net.code)}` : '';
@@ -883,7 +958,11 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
       else if (ph === 'finaltalk') toast('💬 최종 토론! 범인을 좁혀 보세요. (8분)');
       else if (ph === 'vote') openVote();
       else if (ph === 'reveal') openReveal();
-    } else if (prevPhase === null && ph === 'vote') openVote();
+    } else if (prevPhase === null) { // late join / reload: show what the phase needs
+      if (ph === 'intro') openIntro();
+      else if (ph === 'vote') openVote();
+      else if (ph === 'reveal') openReveal();
+    }
     const phaseChanged = prevPhase !== ph;
     prevPhase = ph;
     renderHud();
@@ -903,7 +982,11 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
   return {
     setNet, onState, onEvent, showRoomBanner, openItem: id => openItem(id), openStart, update, toast,
     openNotebook, openBag,
-    setNearby(t) { nearby = t ? { kind: t.kind, id: t.id } : null; renderAct(); },
+    setNearby(t) { // cheap to call every frame: no allocation or DOM write unless the target changed
+      if ((t?.kind ?? null) === (nearby?.kind ?? null) && (t?.id ?? null) === (nearby?.id ?? null)) return;
+      nearby = t ? { kind: t.kind, id: t.id } : null;
+      renderAct();
+    },
     isRevealed: id => revealed.has(id),
     isItemInWorld: id => { const s = S(); return s ? worldItemVisible(s, CASE, id, revealed) : false; },
     onReveal(cb) { revealCbs.push(cb); return () => { const i = revealCbs.indexOf(cb); if (i >= 0) revealCbs.splice(i, 1); }; },

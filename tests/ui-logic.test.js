@@ -4,7 +4,7 @@ import { CASE } from '../src/cases/owl-manor.js';
 import { createState } from '../src/core/rules.js';
 import {
   SAFE_CODE, checkSafeCode, bagItems, evidenceList, searchStep, worldItemVisible, cardFor,
-  canInvestigate, phaseLabel, hostNextLabel, formatRemaining, voteVerdict, containerName,
+  canInvestigate, phaseLabel, hostNextLabel, formatRemaining, voteVerdict, containerName, searchGroup,
 } from '../src/ui-logic.js';
 
 function state(phase = 'investigate1') {
@@ -139,4 +139,26 @@ test('voteVerdict: single top = culprit caught, tie = culprit slipped away, offl
   v = voteVerdict(S, CASE, 'yujin');
   assert.equal(v.caught, false);
   assert.equal(v.headline, '💨 범인이 빠져나갔다…');
+});
+
+test('searchGroup: one search finds every item in the same container nearby (bag, shelf), safe/planters stay apart', () => {
+  assert.deepEqual(searchGroup(CASE, 'manuscript'), ['manuscript', 'pills']);
+  assert.deepEqual(searchGroup(CASE, 'pills'), ['manuscript', 'pills']);
+  assert.deepEqual(searchGroup(CASE, 'oddbook'), ['debutbook', 'oddbook']);
+  assert.deepEqual(searchGroup(CASE, 'debutbook'), ['debutbook', 'oddbook']);
+  assert.deepEqual(searchGroup(CASE, 'watch'), ['watch']);     // the two planters are 2.7 m apart
+  assert.deepEqual(searchGroup(CASE, 'earring'), ['earring']);
+  assert.deepEqual(searchGroup(CASE, 'safe'), ['safe']);
+  assert.deepEqual(searchGroup(CASE, 'whiskey'), ['whiskey']); // not in a container
+  assert.deepEqual(searchGroup(CASE, 'nope'), []);
+});
+
+test('voteVerdict: no votes is not a split vote', () => {
+  const S = state('reveal');
+  S.votes = {};
+  const v = voteVerdict(S, CASE, 'yujin');
+  assert.equal(v.tie, false);
+  assert.equal(v.noVotes, true);
+  S.votes = { host: 'sera', p2: 'yujin' };
+  assert.equal(voteVerdict(S, CASE, 'yujin').noVotes, false);
 });

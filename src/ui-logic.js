@@ -69,6 +69,18 @@ export function searchStep(caseData, id, revealed) {
   return it.container === 'safe' ? 'code' : 'search';
 }
 
+// Items one search finds: same room and container within SEARCH_R of the searched item, in case
+// order (guestA's bag holds the manuscript AND the pills; the study shelf holds both books).
+// The safe is opened by its code, never by a group search.
+export const SEARCH_R = 1.6;
+export function searchGroup(caseData, id) {
+  const it = itemById(caseData, id);
+  if (!it) return [];
+  if (!it.container || it.container === 'safe') return [id];
+  return caseData.ITEMS.filter(o => o.room === it.room && o.container === it.container
+    && Math.hypot(o.pos[0] - it.pos[0], o.pos[2] - it.pos[2]) <= SEARCH_R + 1e-9).map(o => o.id);
+}
+
 // Should main draw world.itemVisuals[id]? Held items (even shared ones) are in someone's bag,
 // and container items stay hidden until this player searched there.
 export function worldItemVisible(S, caseData, id, revealed) {
@@ -98,9 +110,10 @@ export function voteVerdict(S, caseData, myRole) {
   const t = tally(S, caseData);
   const culprit = caseData.culprit;
   const iAmCulprit = myRole === culprit;
-  const tie = t.top.length !== 1;
+  const tie = t.top.length > 1;
+  const noVotes = t.voters === 0;
   const headline = t.caught
     ? (iAmCulprit ? '😱 들켰다… 범인 패배!' : '🎉 범인 검거 성공!')
     : (iAmCulprit ? '😈 완전 범죄 성공!' : '💨 범인이 빠져나갔다…');
-  return { ...t, tie, headline, culprit };
+  return { ...t, tie, noVotes, headline, culprit };
 }
