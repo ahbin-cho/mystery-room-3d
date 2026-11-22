@@ -178,6 +178,10 @@ export function applyAction(S0, caseData, action, fromPid, now, rng = Math.rando
     }
     case 'discoverPassage': {
       if (!p || !inItemPhase) break;
+      // only by pulling the odd book: be in its room and within reach, like pick
+      const book = caseData.ITEMS.find(i => i.id === 'oddbook');
+      if (!book || p.floor !== floorOfRoom(caseData, book.room) || roomAt(caseData.MAP, p.floor, p.x, p.z) !== book.room
+          || !near(p, book.pos[0], book.pos[2])) { reject(TOO_FAR); break; }
       S.passageKnown[fromPid] = true;
       break;
     }

@@ -87,8 +87,8 @@ const ui = createUI({
   me,
   onAction: t => {
     if (frozen() || !net) return;
-    if (t.kind === 'stairs' || t.kind === 'stair') net.send({ t: 'useStairs', id: t.id });
-    else if (t.kind === 'passage') net.send({ t: 'usePassage' });
+    if (t.kind === 'stairs' || t.kind === 'stair') act({ t: 'useStairs', id: t.id });
+    else if (t.kind === 'passage') act({ t: 'usePassage' });
   },
 });
 const frozen = () => reconnecting || disconnected || ui.isModalOpen();
@@ -156,7 +156,27 @@ function onPoses(poses) {
   }
 }
 
+// ── actions: our latest pos always reaches the host first ──
+// The host checks reach against the position it last heard from us, and our pos is throttled to
+// 10 Hz; an action fired on arrival (stairs, passage, pick, …) must not overtake it.
+function act(a) {
+  if (!net) return;
+  sendPos(0, true);
+  net.send(a);
+}
+
 // ── my floor / position from the host ──
+// A teleport reaches a client twice: the state (new floor) and then the teleport event, as separate
+// messages with frames in between. The second one must be a no-op, or it snaps the player back and
+// cancels a route that controls already re-planned on the new floor.
+let lastPlace = null; // { src, floor, x, z, t, used }
+function placeFromHost(src, floor, x, z) {
+  const L = lastPlace, now = performance.now();
+  if (L && !L.used && L.src !== src && L.floor === floor && Math.abs(L.x - x) < 0.01 && Math.abs(L.z - z) < 0.01
+      && now - L.t < 3000) { L.used = true; return; }
+  lastPlace = { src, floor, x, z, t: now, used: false };
+  placeMe(floor, x, z);
+}
 function placeMe(floor, x, z) {
   const floorChanged = floor !== me.floor;
   me.floor = floor; me.x = x; me.z = z; me.moving = false;
@@ -177,7 +197,7 @@ const handlers = {
   },
   onEvent(ev) {
     if (!net) return;
-    if (ev?.type === 'teleport' && ev.pid === me.pid) placeMe(ev.floor, ev.x, ev.z);
+    if (ev?.type === 'teleport' && ev.pid === me.pid) placeFromHost('event', ev.floor, ev.x, ev.z);
     ui.onEvent(ev);
   },
   onPoses,
@@ -206,7 +226,7 @@ function applyState(s) {
       placeMe(mine.floor, x, mine.z);
       setVisibleFloor(world, me.floor);
     }
-    else if (mine.floor !== me.floor) placeMe(mine.floor, mine.x, mine.z); // missed teleport (rejoin)
+    else if (mine.floor !== me.floor) placeFromHost('state', mine.floor, mine.x, mine.z); // teleport (its event follows)
   }
   ui.onState(S);
   syncItems();
@@ -216,14 +236,14 @@ function applyState(s) {
 async function start(net0) {
   net = net0;
   me.pid = net.pid;
-  ui.setNet(net);
+  ui.setNet({ ...net, send: a => (a?.t === 'pos' ? net.send(a) : act(a)) }); // pick / share / vote / … flush pos first
   controls = createControls({
     canvas, camera, map: MAP, world, me, caseData: CASE, pid: me.pid,
     getState: () => S,
     isFrozen: frozen,
     onInteract: t => { if (t.kind === 'item') ui.openItem(t.id); },
-    onStairs: id => net.send({ t: 'useStairs', id }),
-    onPassage: () => net.send({ t: 'usePassage' }),
+    onStairs: id => act({ t: 'useStairs', id }),
+    onPassage: () => act({ t: 'usePassage' }),
     onBlocked: r => { if (r === 'unreachable') ui.toast('거기로는 갈 수 없어요'); },
   });
   if (pendingS) { const s = pendingS; pendingS = null; applyState(s); }
@@ -270,15 +290,16 @@ function myMv() {
   if (me.moving) return 1;
   return ui.isModalOpen() && S && S.phase !== 'lobby' ? 0.5 : 0; // 0.5 = crouching over evidence
 }
-function sendPos(dt) {
+// now = true: right before an action, bypassing the 10 Hz throttle (still skipped if unchanged).
+function sendPos(dt, now = false) {
   if (!net || !S?.players[me.pid]) return;
   posAcc += dt * 1000; posIdle += dt * 1000;
-  if (posAcc < POS_MS) return;
+  if (posAcc < POS_MS && !now) return;
   posAcc = 0;
   const mv = myMv();
   const same = Math.abs(me.x - lastSent.x) < 0.01 && Math.abs(me.z - lastSent.z) < 0.01
     && Math.abs(me.ry - lastSent.ry) < 0.02 && mv === lastSent.mv;
-  if (same && posIdle < POS_KEEPALIVE) return;
+  if (same && (now || posIdle < POS_KEEPALIVE)) return;
   posIdle = 0;
   lastSent.x = me.x; lastSent.z = me.z; lastSent.ry = me.ry; lastSent.mv = mv;
   net.send({ t: 'pos', x: +me.x.toFixed(3), z: +me.z.toFixed(3), ry: +me.ry.toFixed(3), mv });

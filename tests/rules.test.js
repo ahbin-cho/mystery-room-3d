@@ -141,7 +141,7 @@ test('passage: sera and doyun can use from start, others after discover or share
   const rej = act(S, { t: 'usePassage' }, other);
   assert.equal(rej.S.players[other].floor, 0);
   assert.ok(rej.private[other].length > 0);
-  const d = act(S, { t: 'discoverPassage' }, other).S;
+  const d = act(place(S, other, 22, 12), { t: 'discoverPassage' }, other).S;
   assert.ok(canUsePassage(d, CASE, other));
   const use = act(place(d, other, 22, 12), { t: 'usePassage' }, other);
   assert.equal(use.events[0].type, 'teleport');
@@ -151,6 +151,25 @@ test('passage: sera and doyun can use from start, others after discover or share
   assert.equal(sh.S.passageShared, true);
   assert.ok(sh.events.some(e => e.type === 'toast'));
   assert.ok(canUsePassage(sh.S, CASE, other));
+});
+
+test('discoverPassage needs the odd book: far → rejected, near → passageKnown', () => {
+  const S = toPhase(lobby(['a', 'b', 'c', 'd']), 'investigate1');
+  const other = Object.keys(S.players).find(p => !['sera', 'doyun'].includes(S.players[p].role));
+  // in the hall (spawn): too far
+  const far = act(place(S, other, 14, 14), { t: 'discoverPassage' }, other);
+  assert.equal(far.S.passageKnown[other], undefined);
+  assert.equal(far.private[other][0].text, '너무 멀어요');
+  // in the study but across the room (> REACH from the book at 22, 10.8)
+  const room = act(place(S, other, 18, 16), { t: 'discoverPassage' }, other);
+  assert.equal(room.S.passageKnown[other], undefined);
+  // next to the book
+  const near = act(place(S, other, 22, 12), { t: 'discoverPassage' }, other);
+  assert.equal(near.S.passageKnown[other], true);
+  assert.ok(canUsePassage(near.S, CASE, other));
+  // same x/z on the wrong floor (master bedroom above the study)
+  const up = act(place(S, other, 22, 12, 1), { t: 'discoverPassage' }, other);
+  assert.equal(up.S.passageKnown[other], undefined);
 });
 
 test('rejoin keeps role and items', () => {

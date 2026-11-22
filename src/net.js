@@ -10,8 +10,8 @@
 // `S.phaseEndsAt - Date.now()` works the same on host and clients. rem: ms left, or null.
 // onEvent gets the public events plus this player's private ones. onPoses gets
 // { pid: { floor, x, z, ry, mv } } at 10 Hz. send({t:'pos', ...}) may be called every frame:
-// it is applied locally (host) or sent at 10 Hz (client). Other actions are dropped while a client
-// is reconnecting.
+// it is applied locally (host) or sent at 10 Hz (client); a client flushes its pending pos before any
+// other action. Other actions are dropped while a client is reconnecting.
 //
 // Wire protocol (json):
 //   client → host: {t:'join', pid, key, name} first, then game actions (protocol.cleanAction), {t:'leave'}
@@ -333,7 +333,11 @@ export function joinRoom(name, code, caseData, handlers = {}) {
       send(action) {
         if (closed || !action || typeof action.t !== 'string') return;
         if (action.t === 'pos') { pendingPos = action; return; }
-        if (live && conn?.open) conn.send(action);
+        if (live && conn?.open) {
+          // the channel is ordered: flush the latest pos first so the host checks reach at our real spot
+          if (pendingPos) { conn.send(pendingPos); pendingPos = null; }
+          conn.send(action);
+        }
       },
       close() {
         if (closed) return;
