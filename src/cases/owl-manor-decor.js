@@ -274,7 +274,7 @@ const guestA = [
 
 const corridor = [
   ['rug', 13.5, 7.0, 0, { w: 1, d: 11.5, key: 'carpet_blue' }],
-  ['stairwell', 13.0, 18.5, 0, { w: 2, d: 1 }], // 계단 꼭대기 = (14, 18.5)
+  ['stairwell', 13.0, 18.5, 0, { w: 2, d: 1, solid: [13, 19, 15, 19.5] }], // 계단 꼭대기 = (14, 18.5), 먼 쪽 절반은 구멍이라 막음
   ['grand_clock', 15.0, 6.5, 0],
   ['armor', 12.5, 6.5, 0],
   ['painting', 12.5, 7.25, 1, { art: 'portrait', cw: 0.75 }],

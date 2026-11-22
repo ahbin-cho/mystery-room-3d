@@ -1,3 +1,15 @@
+# 하얀 부엉이 저택 사건 (v2) — 요약
+
+v2는 한 화면짜리 산장(v1)을 2층짜리 블록 저택으로 바꾼 새 사건이다. 13개 방을 조이스틱·화면 탭·WASD로 직접 걸어 다니며
+증거를 찾고(가방·서랍·화분 등은 직접 뒤져야 보임, 금고는 비밀번호), 챙긴 증거는 다른 사람 화면에서 사라진다. 2층은 조사 2부터
+열리고, 서재 책장과 온실을 잇는 비밀 통로가 있다. 방장 브라우저가 상태의 주인(PeerJS 별형), 같은 기기로 같은 방 코드에 다시
+들어오면 같은 역할로 이어서 한다. 빌드 없는 ES 모듈(Three.js 0.160 importmap) — 진입점은 `src/main.js`.
+자세한 설계: [docs/superpowers/specs/2026-11-21-mansion-v2-design.md](superpowers/specs/2026-11-21-mansion-v2-design.md),
+구현 계획: [docs/superpowers/plans/2026-11-21-owl-manor-v2.md](superpowers/plans/2026-11-21-owl-manor-v2.md).
+v1(말랑 산장)의 `index.html`은 git 기록에 남아 있다.
+
+---
+
 # 말랑 산장 살인사건 — 설계 메모
 
 ## 무엇을, 왜

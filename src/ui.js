@@ -455,7 +455,11 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
     requestAnimationFrame(() => { if (modal?.kind === kind) card.scrollTop = top; });
     if (kind === 'note') openNotebook(arg);
     else if (kind === 'bag') openBag();
-    else if (kind === 'item') renderCardBody(arg);
+    else if (kind === 'item') {
+      // someone took it while I was looking: re-open so the title and mini view switch to "사라진 증거"
+      if (cardFor(S(), CASE, pid(), arg)?.mode === 'gone' && !modal.gone) openCard(arg, modal.back?.kind ?? null, modal.group);
+      else renderCardBody(arg);
+    }
     else if (kind === 'vote') openVote();
     // intro / reveal / search / code: static
   }
@@ -701,6 +705,7 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
       <h2 class="title" style="font-size:26px">${gone ? '사라진 증거' : esc(it.name)}</h2>${visual}<div data-r="body"></div>`,
     { back: from === 'bag' ? { kind: 'bag' } : from === 'note' ? { kind: 'note', arg: 'ev' } : null });
     modal.group = group && group.length > 1 ? group : null;
+    modal.gone = gone;
     if (!gone && id !== 'photo') startMini(id, $('mini'));
     if (id === 'oddbook' && !gone) {
       const s = S();

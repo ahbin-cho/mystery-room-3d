@@ -2,7 +2,9 @@
 //
 //   const controls = createControls({ canvas, camera, map, world, getState, me,
 //     onInteract(target), onStairs(id), onPassage(),
-//     caseData?, pid?, onBlocked?(reason: 'unreachable' | 'stuck' | 'nothing-near') });
+//     caseData?, pid?, onBlocked?(reason: 'unreachable' | 'stuck' | 'nothing-near'), isFrozen?() });
+//   isFrozen() → true (a UI modal is open, or the client is reconnecting): no movement, no E/Space,
+//   no taps; the camera and wall fade keep updating. A tap route in progress resumes afterwards.
 //   each frame: controls.update(dt)          (moves `me`, places the camera, fades walls)
 //   host confirmed a floor change: controls.setFloor(floor)  (main also teleports me.x / me.z)
 //   controls.dispose()                        (removes every listener, DOM node and fade mesh)
@@ -37,7 +39,7 @@ const CAM_UP = 7.2, CAM_BACK = 4.6;  // landscape offset from the player (m)
 const PORTRAIT_K = 1.5;               // portrait screens (aspect < 1) sit 1.5x farther back
 const LOOK_Y = 0.8;                   // aim at the player's chest
 const FADE_OPACITY = 0.25;
-const FADE_R = 1.1;                   // blocks this close to the camera→player segment fade
+const FADE_R = 1.4;                   // blocks this close to the camera→player segment fade (tuned at 375x812)
 const FADE_FROM = 0.35;               // ...if at least this far in front of the player (m along the segment)
 const HIT_PX = 44;                    // marker tap radius on screen
 const TAP_PX = 12, TAP_MS = 450;      // a tap moves less and lasts shorter than this
@@ -52,7 +54,8 @@ function floorBases(map) {
 
 const wrapAngle = a => Math.atan2(Math.sin(a), Math.cos(a));
 
-export function createControls({ canvas, camera, map, world, getState, me, onInteract, onStairs, onPassage, caseData, pid, onBlocked }) {
+export function createControls({ canvas, camera, map, world, getState, me, onInteract, onStairs, onPassage, caseData, pid, onBlocked, isFrozen }) {
+  const frozen = () => !!isFrozen?.();
   const bases = floorBases(map);
   const grids = [];
   const grid = f => (grids[f] ??= buildGrid(map, f));
@@ -81,6 +84,7 @@ export function createControls({ canvas, camera, map, world, getState, me, onInt
 
   function onDown(e) {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (frozen()) return;
     const p = local(e);
     if (!stick && p.x < p.w / 3 && p.y > (p.h * 2) / 3) {
       stick = { id: e.pointerId, x0: p.x, y0: p.y, x: p.x, y: p.y, t0: performance.now() };
@@ -126,7 +130,7 @@ export function createControls({ canvas, camera, map, world, getState, me, onInt
     return !!el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName));
   };
   function onKeyDown(e) {
-    if (typing() || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (frozen() || typing() || e.ctrlKey || e.metaKey || e.altKey) return; // frozen: let Space reach the modal's buttons
     if (isMoveKey(e.code)) { held.add(e.code); e.preventDefault(); return; }
     if (e.code === 'KeyE' || e.code === 'Space') {
       e.preventDefault(); // Space would scroll / click a focused button
@@ -330,7 +334,7 @@ export function createControls({ canvas, camera, map, world, getState, me, onInt
     const group = world.wallGroups?.[me.floor];
     if (fadeFloor !== me.floor) { if (fadeFloor !== null) clearFade(world.wallGroups?.[fadeFloor]); fadeFloor = me.floor; lastA.x = Infinity; }
     if (!group) return;
-    A.set(me.x, (bases[me.floor] || 0) + 1.0, me.z);
+    A.set(me.x, (bases[me.floor] || 0) + 0.2, me.z); // from the feet: the whole wall column in front fades
     const B = camera.position;
     if (A.distanceToSquared(lastA) < 0.0025 && B.distanceToSquared(lastB) < 0.0025) return;
     lastA.copy(A); lastB.copy(B);
@@ -358,7 +362,11 @@ export function createControls({ canvas, camera, map, world, getState, me, onInt
   return {
     update(dt) {
       dt = Math.min(dt, 0.1); // a stalled tab must not teleport the player through walls
-      walk(dt);
+      if (frozen()) {
+        me.moving = false;
+        if (stick) { stick = null; base.style.display = 'none'; }
+        taps.clear();
+      } else walk(dt);
       placeCamera(dt);
       updateFade();
     },
