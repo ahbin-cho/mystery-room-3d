@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { joystickVector, nearestFree, planRoute, stepRoute, navOptions, SPEED, ARRIVE } from '../src/core/walk.js';
 import { buildGrid, isBlocked } from '../src/core/grid.js';
+import { roomAt } from '../src/core/map.js';
 import { createState } from '../src/core/rules.js';
 import { CASE } from '../src/cases/owl-manor.js';
 import { M } from './fixture.js';
@@ -134,4 +135,48 @@ test('keyboard interact: nearest target within reach and in the same room only',
   assert.equal(nearestTarget(M, pos, [through, far]), null);
   assert.equal(nearestTarget(M, pos, [through, far, close]).id, 'close');
   assert.equal(nearestTarget(M, pos, [close, closer, through]).id, 'closer');
+});
+
+test('tap on the 1F stairs from every post-intro hall spot routes around the staircase', async () => {
+  const { REACH } = await import('../src/core/rules.js');
+  const MAP = CASE.MAP;
+  const grids = [];
+  const gridOf = f => (grids[f] ??= buildGrid(MAP, f));
+  const g = gridOf(0);
+  const st = MAP.stairs.find(s => s.id === 'main').a;
+  const hall = MAP.rooms.find(r => r.id === 'hall').rect;
+  const cx = (hall[0] + hall[2]) / 2, cz = (hall[1] + hall[3]) / 2 - 1; // rules.js hallSpots
+  const walkTo = (from, withGrid) => {
+    const route = planRoute(MAP, from, { floor: 0, x: st.x, z: st.z }, { floorsOpen: [0, 1] }, ARRIVE, withGrid ? gridOf : null);
+    let pos = { ...from }, ev = null;
+    for (let k = 0; k < 900 && !ev; k++) { const r = stepRoute(route, g, pos, 1 / 30); pos = { ...pos, x: r.x, z: r.z }; ev = r.event; }
+    return { ev, pos };
+  };
+  let stuckBefore = 0;
+  for (let n = 1; n <= 6; n++) {
+    for (let i = 0; i < n; i++) {
+      const spot = { x: cx + (i - (n - 1) / 2), z: cz };
+      // controls steps a player spawned inside furniture (the grand clock at 6 players) out first
+      const from = { floor: 0, ...(isBlocked(g, spot.x, spot.z) ? nearestFree(g, spot.x, spot.z, 1.5) : spot) };
+      if (walkTo(from, false).ev === 'stuck') stuckBefore++;
+      const { ev, pos } = walkTo(from, true);
+      assert.equal(ev, 'arrive', `spot ${i + 1}/${n} at x ${from.x}`);
+      assert.ok(Math.hypot(pos.x - st.x, pos.z - st.z) <= REACH, 'the host accepts useStairs from there');
+      assert.equal(roomAt(MAP, 0, pos.x, pos.z), 'hall');
+    }
+  }
+  assert.ok(stuckBefore > 0, 'the straight-line walk did stall on the staircase (regression guard)');
+});
+
+test('gridPath goes around a solid and never through it; a clear line stays one straight leg', async () => {
+  const { gridPath, clear } = await import('../src/core/walk.js');
+  const map = { ...M, solids: [{ floor: 0, rect: [1.5, 1.5, 2.5, 3] }] };
+  const g = buildGrid(map, 0);
+  assert.deepEqual(gridPath(g, 1, 1, 3, 1), [{ x: 3, z: 1 }], 'clear line: no detour');
+  assert.ok(!clear(g, 1, 2.25, 3, 2.25), 'the solid blocks the straight line');
+  const pts = gridPath(g, 1, 2.25, 3, 2.25);
+  assert.ok(pts && pts.length >= 2, 'detour has waypoints');
+  let x = 1, z = 2.25;
+  for (const p of pts) { assert.ok(clear(g, x, z, p.x, p.z), `leg to (${p.x}, ${p.z}) is clear`); x = p.x; z = p.z; }
+  assert.deepEqual(pts[pts.length - 1], { x: 3, z: 2.25 });
 });

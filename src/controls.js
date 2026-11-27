@@ -205,7 +205,7 @@ export function createControls({ canvas, camera, map, world, getState, me, onInt
   }
   function goTo(goal, reach, onArrive) {
     waiting = null;
-    route = planRoute(map, me, goal, opts(), reach);
+    route = planRoute(map, me, goal, opts(), reach, grid); // grid: legs go around in-room furniture
     if (!route) { onBlocked?.('unreachable'); return; }
     route.onArrive = onArrive;
   }

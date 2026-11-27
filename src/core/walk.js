@@ -76,15 +76,144 @@ export function nearestFree(g, x, z, maxR = 1.0, r = BODY) {
   return null;
 }
 
+// ── in-room grid pathfinding ──
+// Nodes are the grid's cell CORNERS: a body (radius BODY ≤ one cell) centred on a corner overlaps the
+// 2×2 cells around it, which is also how a player passes a door (door edges sit on cell lines).
+// A* over 8-connected corners (no corner cutting), then string-pulled with clear() so the walk stays
+// straight wherever it can.
+const LOS_STEP = 0.1; // m between line-of-sight samples
+
+// true when a body can walk the straight segment a → b on grid g.
+export function clear(g, ax, az, bx, bz, r = BODY) {
+  const d = Math.hypot(bx - ax, bz - az);
+  const n = Math.max(1, Math.ceil(d / LOS_STEP));
+  for (let k = 0; k <= n; k++) {
+    const t = k / n;
+    if (isBlocked(g, ax + (bx - ax) * t, az + (bz - az) * t, r)) return false;
+  }
+  return true;
+}
+
+// Walkable corner nearest to (x, z) from which (x, z) itself is in straight reach, within maxR m;
+// `ok(cx, cz)` filters candidates (e.g. same room). Returns [i, j] or null.
+function snapCorner(g, x, z, maxR, ok, needLine) {
+  const ci = Math.round((x - g.ox) / g.cell), cj = Math.round((z - g.oz) / g.cell);
+  const R = Math.ceil(maxR / g.cell);
+  let best = null, bd = Infinity;
+  for (let j = cj - R; j <= cj + R; j++) for (let i = ci - R; i <= ci + R; i++) {
+    if (i < 0 || j < 0 || i > g.w || j > g.h) continue;
+    const cx = g.ox + i * g.cell, cz = g.oz + j * g.cell;
+    const d = Math.hypot(cx - x, cz - z);
+    if (d > maxR || d >= bd || isBlocked(g, cx, cz) || (ok && !ok(cx, cz))) continue;
+    if (needLine && !clear(g, cx, cz, x, z)) continue;
+    bd = d; best = [i, j];
+  }
+  return best;
+}
+
+// Waypoints [{x, z}, …] from (ax, az) to (bx, bz) around furniture on grid g, ending at (bx, bz)
+// itself (or, if that point is inside furniture, at the nearest walkable corner `ok` accepts).
+// Returns null if no way exists (the caller then keeps the straight line).
+export function gridPath(g, ax, az, bx, bz, ok = null) {
+  if (clear(g, ax, az, bx, bz)) return [{ x: bx, z: bz }];
+  const W = g.w + 1, H = g.h + 1; // corners
+  const s = snapCorner(g, ax, az, 1.0, null, true) ?? snapCorner(g, ax, az, 1.0, null, false);
+  const endFree = !isBlocked(g, bx, bz);
+  const e = snapCorner(g, bx, bz, endFree ? 1.0 : 2.0, ok, endFree) ?? (endFree ? null : snapCorner(g, bx, bz, 2.5, ok, false));
+  if (!s || !e) return null;
+  const idx = (i, j) => j * W + i;
+  const px = i => g.ox + i * g.cell, pz = j => g.oz + j * g.cell;
+  const free = new Uint8Array(W * H); // 0 unknown, 1 free, 2 blocked
+  const isFree = (i, j) => {
+    if (i < 0 || j < 0 || i >= W || j >= H) return false;
+    const k = idx(i, j);
+    if (!free[k]) free[k] = isBlocked(g, px(i), pz(j)) ? 2 : 1;
+    return free[k] === 1;
+  };
+  const start = idx(s[0], s[1]), goal = idx(e[0], e[1]);
+  const gs = new Float64Array(W * H).fill(Infinity);
+  const came = new Int32Array(W * H).fill(-1);
+  const closed = new Uint8Array(W * H);
+  const h = k => Math.hypot((k % W) - e[0], Math.floor(k / W) - e[1]);
+  const open = [start]; // small grids (≈ 2 000 corners): a linear-scan open list is fast enough
+  const fOf = new Float64Array(W * H).fill(Infinity);
+  gs[start] = 0; fOf[start] = h(start);
+  let found = false;
+  while (open.length) {
+    let bi = 0;
+    for (let k = 1; k < open.length; k++) if (fOf[open[k]] < fOf[open[bi]]) bi = k;
+    const cur = open[bi];
+    open[bi] = open[open.length - 1]; open.pop();
+    if (cur === goal) { found = true; break; }
+    if (closed[cur]) continue;
+    closed[cur] = 1;
+    const ci = cur % W, cj = Math.floor(cur / W);
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      if (!di && !dj) continue;
+      const ni = ci + di, nj = cj + dj;
+      if (!isFree(ni, nj)) continue;
+      if (di && dj && (!isFree(ci + di, cj) || !isFree(ci, cj + dj))) continue; // no corner cutting
+      const nk = idx(ni, nj);
+      if (closed[nk]) continue;
+      const ng = gs[cur] + (di && dj ? Math.SQRT2 : 1);
+      if (ng >= gs[nk]) continue;
+      gs[nk] = ng; came[nk] = cur; fOf[nk] = ng + h(nk);
+      open.push(nk);
+    }
+  }
+  if (!found) return null;
+  const pts = [];
+  for (let k = goal; k !== -1; k = came[k]) pts.push({ x: px(k % W), z: pz(Math.floor(k / W)) });
+  pts.reverse();
+  if (endFree) pts.push({ x: bx, z: bz });
+  // string pulling: from each kept point, jump to the farthest point still in straight reach
+  const out = [];
+  let cx = ax, cz = az, k = 0;
+  while (k < pts.length) {
+    let far = k;
+    for (let m = pts.length - 1; m > k; m--) if (clear(g, cx, cz, pts[m].x, pts[m].z)) { far = m; break; }
+    out.push(pts[far]);
+    cx = pts[far].x; cz = pts[far].z;
+    k = far + 1;
+  }
+  return out;
+}
+
 // Route state for walking from `from` ({floor,x,z}) to `goal` ({floor,x,z}).
 // reach: stop as soon as the goal is this close (ARRIVE for interact targets, 0 = walk onto it).
+// gridOf (optional): floor → collision grid. With it, every walk leg is routed around furniture on
+// that floor's grid (gridPath); without it, legs are straight lines (moveWithSlide only).
 // Returns null when findPath finds no way (closed floor, passage unknown, outside every room).
-export function planRoute(map, from, goal, navOpts, reach = 0) {
-  const steps = findPath(map, from, goal, navOpts);
+export function planRoute(map, from, goal, navOpts, reach = 0, gridOf = null) {
+  let steps = findPath(map, from, goal, navOpts);
   if (!steps) return null;
+  if (gridOf) steps = routeLegs(map, from, goal, steps, gridOf, reach);
   // reach > 0 only counts inside the goal's room, so an item is never reached through a wall
   return { map, goal: { floor: goal.floor, x: goal.x, z: goal.z, room: roomAt(map, goal.floor, goal.x, goal.z) },
     reach, steps, i: 0, best: Infinity, stuck: 0 };
+}
+
+// Expands each walk leg of a findPath() Step[] into grid waypoints. The leg's start is the previous
+// step (or `from`; after a stairs / passage step, its far end). The last leg toward an interact
+// target (reach > 0) may end at a corner of the goal's room when the goal sits inside furniture.
+function routeLegs(map, from, goal, steps, gridOf, reach) {
+  const out = [];
+  let prev = { floor: from.floor, x: from.x, z: from.z };
+  const goalRoom = roomAt(map, goal.floor, goal.x, goal.z);
+  steps.forEach((st, n) => {
+    if (st.kind !== 'walk' || st.floor !== prev.floor) { out.push(st); prev = st; return; }
+    const g = gridOf(st.floor);
+    const lastLeg = n === steps.length - 1;
+    const ok = lastLeg && reach > 0 ? (x, z) => roomAt(map, st.floor, x, z) === goalRoom : null;
+    const pts = g ? gridPath(g, prev.x, prev.z, st.x, st.z, ok) : null;
+    if (!pts) { out.push(st); prev = st; return; }
+    // an unwalkable end (item on a table) is still the target: keep it as the final point so stepRoute
+    // arrives within reach of it (or slides as close as it can)
+    if (pts.length && (pts[pts.length - 1].x !== st.x || pts[pts.length - 1].z !== st.z)) pts.push({ x: st.x, z: st.z });
+    for (const p of pts) out.push({ floor: st.floor, x: p.x, z: p.z, kind: 'walk' });
+    prev = st;
+  });
+  return out;
 }
 
 // Advances `route` by dt for the player at pos ({floor,x,z}) on collision grid g (of pos.floor).
