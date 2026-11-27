@@ -117,7 +117,7 @@ test('phase helpers', () => {
   assert.equal(containerName('safe'), '금고');
 });
 
-test('voteVerdict: single top = culprit caught, tie = culprit slipped away, offline votes ignored', () => {
+test('voteVerdict: single top = culprit caught, tie = culprit slipped away, votes of players gone offline still count', () => {
   const S = state('reveal');
   S.votes = { host: 'sera', p2: 'yujin', p3: 'sera' };
   let v = voteVerdict(S, CASE, 'yujin');
@@ -133,8 +133,8 @@ test('voteVerdict: single top = culprit caught, tie = culprit slipped away, offl
   S.votes = { host: 'sera', p2: 'yujin', p3: 'yujin' };
   S.players.p3.online = false;
   v = voteVerdict(S, CASE, 'yujin');
-  assert.equal(v.tie, true);
-  assert.deepEqual(v.counts, { sera: 1, yujin: 1 });
+  assert.equal(v.tie, false);
+  assert.deepEqual(v.counts, { sera: 1, yujin: 2 });
   S.votes = {};
   v = voteVerdict(S, CASE, 'yujin');
   assert.equal(v.caught, false);
@@ -161,4 +161,14 @@ test('voteVerdict: no votes is not a split vote', () => {
   assert.equal(v.noVotes, true);
   S.votes = { host: 'sera', p2: 'yujin' };
   assert.equal(voteVerdict(S, CASE, 'yujin').noVotes, false);
+});
+
+test('voteVerdict renders the frozen S.result, not a fresh tally', () => {
+  const S = state('reveal');
+  S.votes = { host: 'yujin', p2: 'yujin', p3: 'sera' };
+  S.result = { counts: { sera: 2, yujin: 1 }, top: ['sera'], caught: true, voters: 3 };
+  const v = voteVerdict(S, CASE, 'yujin');
+  assert.equal(v.caught, true);
+  assert.deepEqual(v.counts, { sera: 2, yujin: 1 });
+  assert.equal(v.headline, '🎉 범인 검거 성공!');
 });

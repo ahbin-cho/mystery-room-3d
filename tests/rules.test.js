@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CASE } from '../src/cases/owl-manor.js';
-import { createState, applyAction, assignRoles, canUsePassage, visibleItem, tally } from '../src/core/rules.js';
+import { createState, applyAction, assignRoles, canUsePassage, visibleItem, tally, voteProgress } from '../src/core/rules.js';
 
 function seeded(seed) {
   let s = (seed * 2654435761 + 12345) >>> 0;
@@ -226,12 +226,46 @@ test('tally tie means not caught', () => {
   assert.equal(t.top.length, 2);
 });
 
-test('offline players excluded from vote count', () => {
+test('offline players excluded from vote count (only those who never voted)', () => {
   let S = toPhase(lobby(), 'vote');
-  for (const p of ['a', 'b', 'c']) S = act(S, { t: 'vote', target: 'sera' }, p).S;
-  S = act(S, { t: 'leave' }, 'c').S;
+  for (const p of ['a', 'b']) S = act(S, { t: 'vote', target: 'sera' }, p).S;
+  S = act(S, { t: 'leave' }, 'c').S; // c went offline without voting
   assert.equal(tally(S, CASE).voters, 2);
   assert.equal(tally(S, CASE).counts.sera, 2);
+  const pr = voteProgress(S);
+  assert.equal(pr.done, 2);
+  assert.equal(pr.total, 2, 'c (offline, never voted) is not waited for');
+});
+
+test('a vote cast before going offline still counts, and is still in the progress line', () => {
+  let S = toPhase(lobby(), 'vote');
+  S = act(S, { t: 'vote', target: 'sera' }, 'a').S;
+  S = act(S, { t: 'vote', target: 'sera' }, 'b').S;
+  S = act(S, { t: 'vote', target: 'yujin' }, 'c').S;
+  S = act(S, { t: 'leave' }, 'b').S; // b locked the phone after voting
+  assert.equal(S.players.b.online, false);
+  const t = tally(S, CASE);
+  assert.equal(t.voters, 3);
+  assert.equal(t.counts.sera, 2);
+  assert.equal(t.caught, true);
+  assert.equal(voteProgress(S).done, 3);
+});
+
+test('entering reveal freezes the tally in S.result; later joins / leaves do not change it', () => {
+  let S = toPhase(lobby(), 'vote');
+  S = act(S, { t: 'vote', target: 'sera' }, 'a').S;
+  S = act(S, { t: 'vote', target: 'sera' }, 'b').S;
+  S = act(S, { t: 'vote', target: 'yujin' }, 'c').S;
+  assert.equal(S.result, undefined, 'no result before reveal');
+  S = act(S, { t: 'leave' }, 'b').S;
+  S = act(S, { t: 'next' }, 'host').S;
+  assert.equal(S.phase, 'reveal');
+  assert.deepEqual(S.result, { counts: { sera: 2, yujin: 1 }, top: ['sera'], caught: true, voters: 3 });
+  const frozen = JSON.stringify(S.result);
+  S = act(S, { t: 'join', name: 'b' }, 'b').S;
+  S = act(S, { t: 'leave' }, 'a').S;
+  S = act(S, { t: 'vote', target: 'yujin' }, 'a').S; // no votes after the vote phase
+  assert.equal(JSON.stringify(S.result), frozen);
 });
 
 test('caught when culprit has unique top', () => {

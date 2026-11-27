@@ -66,11 +66,13 @@ export function visibleItem(S, pid, itemId) {
   return it.holder === pid ? 'mine' : 'gone';
 }
 
+// Counts every vote that was cast, even if the voter went offline afterwards (a screen lock after
+// voting must not throw the vote away). Players who never voted simply are not in S.votes.
 export function tally(S, caseData) {
   const counts = {};
   let voters = 0;
   for (const [pid, target] of Object.entries(S.votes)) {
-    if (!S.players[pid]?.online) continue;
+    if (!S.players[pid]) continue;
     counts[target] = (counts[target] ?? 0) + 1;
     voters++;
   }
@@ -78,6 +80,13 @@ export function tally(S, caseData) {
   const top = max > 0 ? Object.keys(counts).filter(k => counts[k] === max) : [];
   const culprit = caseData.culprit ?? caseData.CULPRIT;
   return { counts, top, caught: top.length === 1 && top[0] === culprit, voters };
+}
+
+// "투표 완료 done / total": votes already cast (online or not) out of the players who voted or are
+// still online. An offline player who never voted is not waited for.
+export function voteProgress(S) {
+  const ids = S.order.filter(id => S.players[id] && (S.votes[id] || S.players[id].online !== false));
+  return { done: ids.filter(id => S.votes[id]).length, total: ids.length };
 }
 
 function hallSpots(caseData, n) {
@@ -92,6 +101,8 @@ function enterPhase(S, caseData, id, now, events) {
   S.phaseEndsAt = ph.ms ? now + ph.ms : null;
   S.floorsOpen = [...(ph.floors ?? [0, 1])];
   events.push({ type: 'phase', phase: id });
+  // the verdict is frozen once, on the host, as the reveal opens; every client renders S.result
+  if (id === 'reveal') S.result = tally(S, caseData);
   if (id === 'intro') {
     const pids = S.order.filter(p => S.players[p]);
     const roles = assignRoles(pids, caseData, S.rng);

@@ -106,8 +106,9 @@ export function cardFor(S, caseData, pid, id) {
 }
 
 // Reveal headline from my role's point of view. A tie (or no votes) means nobody is convicted.
+// Uses the result the host froze on entering reveal (S.result); recomputes only if it is missing.
 export function voteVerdict(S, caseData, myRole) {
-  const t = tally(S, caseData);
+  const t = S.result ?? tally(S, caseData);
   const culprit = caseData.culprit;
   const iAmCulprit = myRole === culprit;
   const tie = t.top.length > 1;
