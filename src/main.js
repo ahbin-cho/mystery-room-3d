@@ -90,6 +90,7 @@ const ui = createUI({
     if (t.kind === 'stairs' || t.kind === 'stair') act({ t: 'useStairs', id: t.id });
     else if (t.kind === 'passage') act({ t: 'usePassage' });
   },
+  onRetry: () => rejoin(),
 });
 const frozen = () => reconnecting || disconnected || ui.isModalOpen();
 
@@ -204,7 +205,10 @@ const handlers = {
   onDisconnected(reason) {
     disconnected = true;
     reconnecting = false;
+    lostReason = reason;
     ui.showConnection('disconnected', reason);
+    // gave up while the screen was off / the host was asleep: try again as soon as we are looked at
+    if (reason === 'lost' && document.visibilityState === 'visible') setTimeout(() => { if (document.visibilityState === 'visible') rejoin(); }, 1500);
   },
   onReconnecting(n) {
     reconnecting = true;
@@ -233,10 +237,51 @@ function applyState(s) {
   syncCharacters();
 }
 
+// ── keep the screen on (Screen Wake Lock) ──
+// A locked phone suspends JS and drops the data channels; the host's lock ends the room for everyone.
+// Held while in a room; the browser releases it whenever the page is hidden, so it is re-acquired on
+// visibilitychange and on the next touch. Unsupported / refused: silently nothing (the UI shows a hint).
+let wakeLock = null, wakeWanted = false, wakeBusy = false;
+async function keepAwake() {
+  if (!wakeWanted || wakeLock || wakeBusy || document.visibilityState !== 'visible' || !navigator.wakeLock?.request) return;
+  wakeBusy = true;
+  try {
+    const l = await navigator.wakeLock.request('screen');
+    wakeLock = l;
+    l.addEventListener?.('release', () => { if (wakeLock === l) wakeLock = null; });
+  } catch { wakeLock = null; } finally { wakeBusy = false; }
+}
+addEventListener('pointerdown', keepAwake, { capture: true, passive: true });
+
+// ── rejoin after the client gave up (10 tries) ──
+let joinInfo = null;  // { name, code } of the room we are in (clients only)
+let lostReason = null;
+let rejoining = false;
+async function rejoin() {
+  if (rejoining || !joinInfo || !disconnected || lostReason !== 'lost') return;
+  rejoining = true;
+  ui.showConnection('reconnecting');
+  try {
+    const n = await joinRoom(joinInfo.name, joinInfo.code, CASE, handlers);
+    disconnected = false; lostReason = null;
+    start(n);
+  } catch {
+    ui.showConnection('disconnected', 'lost');
+  } finally { rejoining = false; }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  keepAwake();
+  if (disconnected && lostReason === 'lost') rejoin();
+});
+
 async function start(net0) {
   net = net0;
   me.pid = net.pid;
+  wakeWanted = true;
+  keepAwake();
   ui.setNet({ ...net, send: a => (a?.t === 'pos' ? net.send(a) : act(a)) }); // pick / share / vote / … flush pos first
+  if (controls) return; // rejoined: controls, listeners and the loop are already running
   controls = createControls({
     canvas, camera, map: MAP, world, me, caseData: CASE, pid: me.pid,
     getState: () => S,
@@ -244,7 +289,10 @@ async function start(net0) {
     onInteract: t => { if (t.kind === 'item') ui.openItem(t.id); },
     onStairs: id => act({ t: 'useStairs', id }),
     onPassage: () => act({ t: 'usePassage' }),
-    onBlocked: r => { if (r === 'unreachable') ui.toast('거기로는 갈 수 없어요'); },
+    onBlocked: r => {
+      if (r === 'unreachable') ui.toast('거기로는 갈 수 없어요');
+      else if (r === 'stuck') ui.toast(matchMedia('(pointer:fine)').matches ? '막혀서 못 가요 — 방향키로 돌아가 보세요' : '막혀서 못 가요 — 조이스틱으로 돌아가 보세요');
+    },
   });
   if (pendingS) { const s = pendingS; pendingS = null; applyState(s); }
   try { history.replaceState(null, '', `${location.pathname}?room=${net.code}${DEBUG ? '&debug' : ''}`); } catch { /* file:// */ }
@@ -252,7 +300,7 @@ async function start(net0) {
 
 ui.openStart(
   name => createRoom(name, CASE, handlers).then(start),
-  (name, code) => joinRoom(name, code, CASE, handlers).then(start),
+  (name, code) => joinRoom(name, code, CASE, handlers).then(n => { joinInfo = { name, code: n.code }; return start(n); }),
 );
 
 // ── nearest interactable for the 🔍 button ──

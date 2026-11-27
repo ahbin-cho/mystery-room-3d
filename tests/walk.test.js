@@ -156,7 +156,7 @@ test('tap on the 1F stairs from every post-intro hall spot routes around the sta
   for (let n = 1; n <= 6; n++) {
     for (let i = 0; i < n; i++) {
       const spot = { x: cx + (i - (n - 1) / 2), z: cz };
-      // controls steps a player spawned inside furniture (the grand clock at 6 players) out first
+      // controls steps a player spawned inside furniture (the grand clock, at 5-6 players) out first
       const from = { floor: 0, ...(isBlocked(g, spot.x, spot.z) ? nearestFree(g, spot.x, spot.z, 1.5) : spot) };
       if (walkTo(from, false).ev === 'stuck') stuckBefore++;
       const { ev, pos } = walkTo(from, true);

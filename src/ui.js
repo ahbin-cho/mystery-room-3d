@@ -45,7 +45,8 @@ import * as THREE from 'three';
 import { VoxelBuilder } from './voxel.js';
 import { PROPS } from './props.js';
 import { makeCharacter, disposeCharacter } from './characters.js';
-import { canUsePassage } from './core/rules.js';
+import { canUsePassage, voteProgress, REACH } from './core/rules.js';
+import { roomAt } from './core/map.js';
 import {
   checkSafeCode, bagItems, evidenceList, searchStep, worldItemVisible, cardFor, canInvestigate,
   canPickPhase, phaseLabel, hostNextLabel, formatRemaining, voteVerdict, containerName, searchGroup,
@@ -72,6 +73,7 @@ const CSS = `
 .owl-ui .row{display:flex;gap:8px;align-items:center}
 .owl-ui .stack{display:flex;flex-direction:column;gap:10px}
 .owl-ui .stamp{position:absolute;right:64px;top:16px;border:3px solid var(--red);color:var(--red);font-family:'Jua';padding:2px 8px;border-radius:8px;transform:rotate(8deg);font-size:14px;opacity:.9;pointer-events:none}
+.owl-ui .stamp.inline{position:static;display:inline-block;transform:rotate(-4deg);margin:0 0 10px}
 .owl-ui .tag{display:inline-block;font-family:'Jua';font-size:12px;padding:2px 8px;border-radius:999px;background:var(--paper2);margin-right:4px}
 .owl-ui .tag.pub{background:var(--navy);color:#fff}
 .owl-ui .err{color:var(--red);font-size:14px;min-height:18px}
@@ -143,9 +145,12 @@ const VICTIM_LOOK = { skin: '#efc9a8', hair: 'neat', hairColor: '#d6d6d6', top: 
 const DISCONNECT_TEXT = {
   refused: ['들어갈 수 없어요', '이 기기로는 이 방에 다시 들어갈 수 없어요.'],
   replaced: ['다른 곳에서 접속했어요', '같은 기기의 다른 탭이나 창에서 이 방에 다시 들어와서, 이 화면의 연결은 끝났어요.'],
-  lost: ['연결이 끊겼어요', '방장과 다시 연결하지 못했어요. 방 코드로 다시 들어와 주세요.'],
+  lost: ['연결이 끊겼어요', '방장과 다시 연결하지 못했어요. 방장 폰 화면이 켜져 있는지 확인하고 다시 연결해 주세요.'],
   'host-left': ['방이 닫혔어요', '방장이 게임을 나가서 방이 끝났어요.'],
 };
+
+const HOST_SCREEN_HINT = '📱 방장 폰 화면이 꺼지면 모두 끊겨요 — 게임 내내 화면을 켜 두세요';
+const ODDBOOK_FAR = '구석 책장에 혼자 비스듬히 튀어나온 책 한 권. 여기서는 손이 닿지 않는다. 가까이 가서 당겨 봐야 할 것 같다.';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -332,7 +337,7 @@ function partyPhoto(caseData) {
 
 // ────────────────────────────────────────────────────────────────────────────
 
-export function createUI({ caseData, net: net0 = null, getState, me = null, onAction, root = document.body } = {}) {
+export function createUI({ caseData, net: net0 = null, getState, me = null, onAction, onRetry = null, root = document.body } = {}) {
   const CASE = caseData;
   const ROLE_KEYS = Object.keys(CASE.ROLES).filter(k => k !== 'helper');
   const room = id => CASE.MAP.rooms.find(r => r.id === id);
@@ -357,6 +362,20 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
   const pid = () => net?.pid ?? null;
   const send = a => net?.send(a);
   const myRole = () => S()?.players?.[pid()]?.role ?? null;
+  // Same test as the host's discoverPassage (rules.js): oddbook's room and floor, within REACH.
+  const ODD = itemDef('oddbook');
+  function nearOddbook() {
+    const p = myPos();
+    if (!ODD || !p || p.floor !== room(ODD.room)?.floor || roomAt(CASE.MAP, p.floor, p.x, p.z) !== ODD.room) return false;
+    return Math.hypot(p.x - ODD.pos[0], p.z - ODD.pos[2]) <= REACH - 0.05;
+  }
+  // The oddbook card tells about the passage only to someone who can use it, or who is pulling the
+  // book right now (in reach, opened from the world: the host will accept the discovery).
+  function oddbookOpen(from) {
+    const s = S();
+    if (!s) return false;
+    return canUsePassage(s, CASE, pid()) || (!from && canPickPhase(s.phase) && nearOddbook());
+  }
 
   // ── DOM ──
   if (!document.getElementById('owl-ui-css')) {
@@ -387,7 +406,7 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
   <button class="act hidden" data-r="act"><span data-r="actTxt">🔍 조사</span>${finePointer ? '<kbd>E</kbd>' : ''}</button>
   <div class="overlay hidden" data-r="start" style="background:rgba(25,22,40,.35)">
     <div class="card dossier">
-      <div class="stamp">CASE #1121</div>
+      <div class="stamp inline">사건 #1121</div>
       <p class="sub jua" style="margin:0">친구들과 각자 폰으로 접속하는 추리 게임</p>
       <h1 class="title">하얀 부엉이<br/>저택 사건</h1>
       <p class="sub">폭설로 길이 끊긴 송년 파티의 밤, 추리소설가가 서재에서 숨진 채 발견됐다. 범인은 우리 중 한 명.</p>
@@ -547,10 +566,21 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
     lobby: '지금 인원으로 게임을 시작할까요?\n(시작 후 들어온 사람은 남은 역할이나 조수 탐정이 돼요)',
     finaltalk: '투표를 시작할까요?', vote: '결과를 공개할까요?',
   };
+  // In-page confirm (window.confirm can be blocked or auto-answered by in-app browsers like KakaoTalk).
+  function confirmModal(text, okLabel, onOk) {
+    openModal('confirm', null, `<div class="stamp">확인</div><h2 class="title" style="font-size:24px;margin-top:30px">${esc(okLabel)}</h2>
+      <p style="white-space:pre-line">${esc(text)}</p>
+      <div class="row" style="margin-top:14px"><button data-r="cfNo" style="flex:1">취소</button><button class="primary" data-r="cfYes" style="flex:1">${esc(okLabel)}</button></div>`);
+    $('cfNo').onclick = closeModal;
+    $('cfYes').onclick = () => { closeModal(); onOk(); };
+    setTimeout(() => $('cfYes')?.focus(), 30);
+  }
   $('host').onclick = () => {
     const ph = S()?.phase;
-    if (HOST_CONFIRM[ph] && !confirm(HOST_CONFIRM[ph])) return;
-    send({ t: 'next' });
+    if (!HOST_CONFIRM[ph]) { send({ t: 'next' }); return; }
+    confirmModal(HOST_CONFIRM[ph], hostNextLabel(ph), () => {
+      if (S()?.phase === ph) send({ t: 'next' }); // the timer may have moved on meanwhile
+    });
   };
   $('code').onclick = () => {
     if (!net) return;
@@ -617,7 +647,10 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
     $('start').classList.add('hidden');
     $('hud').classList.remove('hidden');
     $('code').textContent = `방 코드 ${n.code}`;
-    if (n.isHost) toast(`방이 열렸어요! 친구들에게 코드 ${n.code}를 알려 주세요.`);
+    if (n.isHost) {
+      toast(`방이 열렸어요! 친구들에게 코드 ${n.code}를 알려 주세요.`);
+      toast(HOST_SCREEN_HINT);
+    }
     renderHud();
   }
 
@@ -629,11 +662,17 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
       <div class="secret"><h3>🤫 나만 아는 비밀</h3><p>${esc(r.secret)}</p><h3>👀 내가 본 것</h3><p>${esc(r.knows)}</p><h3>🎯 목표</h3><p>${esc(r.goal)}</p>
       ${r.knowsPassage ? '<p>🕳️ 서재 책장과 온실 화분대를 잇는 비밀 통로를 처음부터 알고 있어요. 언제든 쓸 수 있어요.</p>' : ''}</div>`;
   }
-  function openIntro() {
-    openModal('intro', null, `<div class="stamp">TOP SECRET</div><p class="sub jua" style="margin:0">CASE #1121</p><h2 class="title">${esc(CASE.title)}</h2>
+  // late = joined (or reloaded) after the intro: same card, with where the game is now instead of the
+  // "wait for the host" line.
+  function openIntro(late = false) {
+    const ph = S()?.phase;
+    const tail = late
+      ? `<p class="sub">⏱️ 게임이 이미 진행 중이에요. 지금은 <b>${esc(phaseLabel(ph))}</b> 시간이에요. 카드를 닫고 바로 참여하세요.</p>`
+      : net?.isHost ? '<p class="sub">방장: 모두 읽었으면 오른쪽 위 <b>조사 시작</b>을 눌러 주세요.</p>' : '<p class="sub">방장이 조사를 시작할 때까지 기다려 주세요.</p>';
+    openModal('intro', late ? 'late' : null, `<div class="stamp">극비</div><p class="sub jua" style="margin:0">사건 #1121</p><h2 class="title">${esc(CASE.title)}</h2>
       <p>${esc(CASE.intro)}</p><h3>당신의 역할</h3>${roleCardHtml(myRole())}
       <p class="sub" style="margin-top:12px">🔒 다른 사람에게 화면을 보여 주지 마세요. 이 카드는 📒 수첩에서 다시 볼 수 있어요.</p>
-      ${net?.isHost ? '<p class="sub">방장: 모두 읽었으면 오른쪽 위 <b>조사 시작</b>을 눌러 주세요.</p>' : '<p class="sub">방장이 조사를 시작할 때까지 기다려 주세요.</p>'}`);
+      ${net?.isHost ? `<p class="note">${HOST_SCREEN_HINT}</p>` : ''}${tail}`);
   }
 
   // ── evidence: search / safe / card ──
@@ -696,20 +735,23 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
     const c = cardFor(S(), CASE, pid(), id);
     const idx = CASE.ITEMS.indexOf(it) + 1;
     const gone = c.mode === 'gone';
-    if (!gone) examined.add(id);
+    const oddFar = id === 'oddbook' && !oddbookOpen(from);
+    if (!gone && !oddFar) examined.add(id); // a far oddbook card shows no passage, so nothing to note yet
     const visual = gone ? '' : id === 'photo'
       ? `<img class="photo" alt="파티 단체 사진: 왼쪽부터 차유진, 한별, 한겨울, 세라, 도윤" src="${partyPhoto(CASE)}"/><p class="caption">송년 파티 · 밤 9시 30분</p>`
       : '<div class="mini" data-r="mini" aria-hidden="true"></div>';
-    openModal('item', id, `<div class="stamp">EVIDENCE #${String(idx).padStart(2, '0')}</div>
+    openModal('item', id, `<div class="stamp">증거 #${String(idx).padStart(2, '0')}</div>
       <p class="sub jua" style="margin:0">${esc(room(it.room)?.name)}${it.kind === 'fixed' ? ' · 고정 증거' : ''}</p>
       <h2 class="title" style="font-size:26px">${gone ? '사라진 증거' : esc(it.name)}</h2>${visual}<div data-r="body"></div>`,
     { back: from === 'bag' ? { kind: 'bag' } : from === 'note' ? { kind: 'note', arg: 'ev' } : null });
     modal.group = group && group.length > 1 ? group : null;
     modal.gone = gone;
     if (!gone && id !== 'photo') startMini(id, $('mini'));
+    modal.from = from;
     if (id === 'oddbook' && !gone) {
       const s = S();
-      if (!s.passageKnown?.[pid()] && canPickPhase(s.phase)) send({ t: 'discoverPassage' });
+      // pull the book only from the world and within the host's reach, never from the bag / notebook
+      if (!from && canPickPhase(s.phase) && !canUsePassage(s, CASE, pid()) && nearOddbook()) send({ t: 'discoverPassage' });
     }
     renderCardBody(id);
   }
@@ -730,8 +772,11 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
       bindFound();
       return;
     }
-    let html = `<p>${esc(it.desc)}</p>`;
-    if (id === 'oddbook') {
+    const oddFar = id === 'oddbook' && !oddbookOpen(modal?.from ?? null);
+    let html = `<p>${esc(oddFar ? ODDBOOK_FAR : it.desc)}</p>`;
+    if (oddFar) {
+      if (canPickPhase(s.phase)) html += '<p class="note">📚 책장에 바짝 다가가서 어긋난 책을 직접 당겨 보세요.</p>';
+    } else if (id === 'oddbook') {
       html += '<div class="callout">책장 뒤에 통로가 있다!</div>';
       if (s.passageShared) html += '<p class="sub">📢 이제 모두가 이 통로를 알고 있어요.</p>';
       else if (canUsePassage(s, CASE, pid()) && canPickPhase(s.phase)) html += '<button class="navy" data-r="sharePassage" style="width:100%">🕳️ 모두에게 통로 알리기</button>';
@@ -885,15 +930,14 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
   function openVote() {
     const s = S();
     const my = s.votes[pid()];
-    const voters = s.order.filter(id => s.players[id]?.online !== false);
-    const done = voters.filter(id => s.votes[id]).length;
+    const { done, total } = voteProgress(s);
     const btns = ROLE_KEYS.map(rk => {
       const r = CASE.ROLES[rk];
       return `<button class="voteBtn ${my === rk ? 'on' : ''}" data-v="${rk}" aria-pressed="${my === rk}">${portraitImg(r.look)}<span><b>${esc(r.name)}</b> <span class="tag">${esc(r.job)}</span></span></button>`;
     }).join('');
     const canVote = s.phase === 'vote';
-    openModal('vote', null, `<div class="stamp">VOTE</div><h2 class="title">범인은 누구?</h2><p class="sub">${canVote ? '한 명을 골라 주세요. 결과 공개 전까지 바꿀 수 있어요.' : '투표가 끝났어요.'}</p>${btns}
-      <p class="sub">투표 완료 ${done} / ${voters.length}명</p>`);
+    openModal('vote', null, `<div class="stamp">투표</div><h2 class="title">범인은 누구?</h2><p class="sub">${canVote ? '한 명을 골라 주세요. 결과 공개 전까지 바꿀 수 있어요.' : '투표가 끝났어요.'}</p>${btns}
+      <p class="sub">투표 완료 ${done} / ${total}명</p>`);
     card.querySelectorAll('[data-v]').forEach(b => { b.disabled = !canVote; b.onclick = () => send({ t: 'vote', target: b.dataset.v }); });
   }
   function openReveal() {
@@ -907,7 +951,7 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
       return `<div style="margin:6px 0"><div class="row" style="justify-content:space-between"><span><b>${esc(r.name)}</b> ${culprit ? '<span class="tag" style="background:#b5352d;color:#fff">범인</span>' : ''}</span><span>${n}표</span></div>
         <div class="bar" style="width:${Math.max(3, n / total * 100)}%;background:${culprit ? '#b5352d' : '#6f625a'}"></div></div>`;
     }).join('');
-    openModal('reveal', null, `<div class="stamp">CASE CLOSED</div><h2 class="title" style="margin-top:34px">${esc(v.headline)}</h2>
+    openModal('reveal', null, `<div class="stamp">사건 종결</div><h2 class="title" style="margin-top:34px">${esc(v.headline)}</h2>
       ${v.noVotes ? '<p class="sub">아무도 투표하지 않아 범인이 빠져나갔다!</p>' : v.tie ? '<p class="sub">표가 갈려 아무도 지목되지 않았어요. 범인이 빠져나갔다!</p>' : ''}${bars}
       <h3>📜 사건의 진상</h3><p style="white-space:pre-line">${esc(CASE.truth)}</p>
       <h3>🤫 모두의 비밀</h3>${ROLE_KEYS.map(rk => `<p style="font-size:14px"><b>${esc(CASE.ROLES[rk].name)}</b>: ${esc(CASE.ROLES[rk].secret)}</p>`).join('')}`);
@@ -925,13 +969,16 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
       return;
     }
     const [title, msg] = DISCONNECT_TEXT[info] ?? ['연결이 끝났어요', '게임과의 연결이 끝났어요.'];
+    const retry = info === 'lost' && onRetry;
     c.innerHTML = `<div class="stamp">연결 끊김</div><h2 class="title" style="font-size:26px">${esc(title)}</h2><p>${esc(msg)}</p>
-      <button class="primary" data-r="restart" style="width:100%;margin-top:12px">처음으로</button>`;
+      ${retry ? '<button class="primary" data-r="retry" style="width:100%;margin-top:12px">다시 연결</button>' : ''}
+      <button class="${retry ? '' : 'primary'}" data-r="restart" style="width:100%;margin-top:12px">처음으로</button>`;
+    if (retry) $('retry').onclick = () => onRetry();
     $('restart').onclick = () => {
       const keep = info === 'lost' && net?.code ? `?room=${encodeURIComponent(net.code)}` : '';
       location.href = location.pathname + keep;
     };
-    $('restart').focus();
+    ($('retry') ?? $('restart')).focus();
   }
 
   // ── state / events ──
@@ -965,6 +1012,7 @@ export function createUI({ caseData, net: net0 = null, getState, me = null, onAc
       else if (ph === 'reveal') openReveal();
     } else if (prevPhase === null) { // late join / reload: show what the phase needs
       if (ph === 'intro') openIntro();
+      else if (canPickPhase(ph) && myRole()) openIntro(true); // a role handed out mid-game must be seen
       else if (ph === 'vote') openVote();
       else if (ph === 'reveal') openReveal();
     }
